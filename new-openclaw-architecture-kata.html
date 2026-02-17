@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>New OpenClaw Architecture Kata</title>
+  <style>
+    :root {
+      --bg: #0f1418;
+      --panel: #151d23;
+      --text: #e6edf3;
+      --muted: #9fb0bf;
+      --accent: #58c4dd;
+      --border: #26343f;
+      --code-bg: #0b1116;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: var(--text);
+      background: radial-gradient(circle at top left, #19313a 0%, transparent 40%),
+                  radial-gradient(circle at bottom right, #40221f 0%, transparent 35%),
+                  linear-gradient(145deg, #0f1418, #111f26 45%, #1e1613);
+      min-height: 100vh;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 28px 20px 56px;
+    }
+    article {
+      background: color-mix(in oklab, var(--panel) 88%, black 12%);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+    }
+    h1, h2, h3 { line-height: 1.25; margin-top: 1.5em; }
+    h1 { margin-top: 0; font-size: 2rem; }
+    h2 { font-size: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.1rem; }
+    h3 { font-size: 1.15rem; color: var(--accent); }
+    p, li { color: var(--text); }
+    code {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.08rem 0.35rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      overflow-x: auto;
+    }
+    pre code { border: 0; padding: 0; background: transparent; }
+    hr { border: 0; border-top: 1px solid var(--border); margin: 1.8rem 0; }
+    a { color: var(--accent); }
+    .meta { color: var(--muted); font-size: 0.95rem; margin-top: -0.6rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <article>
+      <div class="meta">Generated from <code>new-openclaw-architecture-kata.md</code></div>
+      <h1 id="new-openclaw-architecture-kata">New OpenClaw Architecture Kata</h1>
+<h2 id="a-monorepo-first-guide-for-shared-cli-web-agent-runtime">A Monorepo-First Guide for Shared CLI + Web Agent Runtime</h2>
+<hr />
+<h2 id="why-this-version-exists">Why This Version Exists</h2>
+<p>Your project already has two channels:</p>
+<ul>
+<li>CLI operator console (<code>apps/cli</code>)</li>
+<li>Web dashboard + API (<code>apps/web</code>)</li>
+</ul>
+<p>The first kata version assumed a single CLI app first, then gateway later.<br />
+This revised kata matches your current reality: <strong>multi-channel from the start</strong>, with one shared runtime so behavior does not drift.</p>
+<p>Core rule for this kata:</p>
+<blockquote>
+<p>Channels are adapters. Runtime is shared. Session state is server-owned.</p>
+</blockquote>
+<hr />
+<h2 id="target-architecture">Target Architecture</h2>
+<pre><code class="language-text">jihn/
+├── apps/
+│   ├── cli/                     # Ink UI adapter
+│   └── web/                     # Next.js UI + HTTP adapter
+├── packages/
+│   └── agent-core/              # Shared runtime
+│       ├── src/
+│       │   ├── agent/loop.ts
+│       │   ├── tools/
+│       │   ├── sessions/
+│       │   ├── gateway/handle-message.ts
+│       │   ├── config/prompt-composer.ts
+│       │   ├── memory/
+│       │   ├── routing/
+│       │   └── types.ts
+</code></pre>
+<h2 id="current-implemented-baseline">Current Implemented Baseline</h2>
+<p>These parts are already implemented in your repo:</p>
+<ul>
+<li>Shared runtime package:</li>
+<li><code>packages/agent-core/src/agent/loop.ts</code></li>
+<li><code>packages/agent-core/src/config/agent.ts</code></li>
+<li><code>packages/agent-core/src/types.ts</code></li>
+<li><code>packages/agent-core/src/tools.ts</code></li>
+<li><code>packages/agent-core/src/index.ts</code></li>
+<li>Shared runtime tests:</li>
+<li><code>packages/agent-core/tests/agent-loop.test.js</code></li>
+<li><code>packages/agent-core/tests/config.test.js</code></li>
+<li>CLI imports shared runtime directly:</li>
+<li><code>apps/cli/src/index.ts</code></li>
+<li><code>apps/cli/src/ui/app.tsx</code></li>
+<li>Web route imports shared runtime for loop/config/types:</li>
+<li><code>apps/web/app/api/agent/route.ts</code></li>
+</ul>
+<h3 id="non-negotiable-boundaries">Non-negotiable boundaries</h3>
+<ol>
+<li><code>apps/cli</code> and <code>apps/web</code> must import from <code>packages/agent-core</code>, not from each other.</li>
+<li><code>apps/web</code> API must not accept full message history from the browser as source-of-truth.</li>
+<li>Session persistence and keying happen in shared runtime, not in channel code.</li>
+</ol>
+<hr />
+<h2 id="kata-structure-revised">Kata Structure (Revised)</h2>
+<h2 id="part-1-shared-agent-loop-in-agent-core">Part 1: Shared Agent Loop in <code>agent-core</code></h2>
+<p>Build <code>runAgentTurn</code> once in <code>packages/agent-core</code>.<br />
+Both CLI and web use it.</p>
+<p>Deliverables:</p>
+<ul>
+<li><code>packages/agent-core/src/agent/loop.ts</code></li>
+<li><code>packages/agent-core/src/types.ts</code></li>
+<li><code>packages/agent-core/src/config/agent.ts</code></li>
+<li>tool execution callback contract</li>
+</ul>
+<p>Acceptance:</p>
+<ul>
+<li>Same prompt + same tool input =&gt; same assistant/tool behavior in CLI and web.</li>
+</ul>
+<hr />
+<h2 id="part-2-jsonl-sessions-shared-message-handler">Part 2: JSONL Sessions + Shared Message Handler</h2>
+<p>This is the most important architecture shift in the kata.</p>
+<p>Goal: move from “UI owns conversation state” to “shared runtime owns conversation state”.</p>
+<h3 id="why-jsonl-in-plain-terms">Why JSONL, in plain terms</h3>
+<p>Use one file per session.<br />
+Each line is one JSON object (one message).</p>
+<p>Benefits:</p>
+<ul>
+<li>append-only writes are simple and crash-tolerant</li>
+<li>easy to inspect with terminal tools</li>
+<li>no DB setup needed while learning architecture</li>
+</ul>
+<p>Mental model:</p>
+<ul>
+<li>session file = transcript log</li>
+<li>each new message = append one line</li>
+<li>compaction (later) = rewrite file deliberately</li>
+</ul>
+<h3 id="jsonl-rules-to-follow">JSONL rules to follow</h3>
+<ol>
+<li>One complete JSON object per line.</li>
+<li>Always end appended lines with <code>\n</code>.</li>
+<li>Ignore empty lines when reading.</li>
+<li>If a line fails JSON parse, skip it and continue (graceful recovery).</li>
+<li>Never partially rewrite the file during normal turns.</li>
+</ol>
+<hr />
+<h3 id="part-21-define-session-locations-and-ownership">Part 2.1: Define session locations and ownership</h3>
+<p>Create these shared runtime files:</p>
+<ul>
+<li><code>packages/agent-core/src/sessions/store.ts</code></li>
+<li><code>packages/agent-core/src/sessions/keys.ts</code></li>
+<li><code>packages/agent-core/src/gateway/handle-message.ts</code></li>
+</ul>
+<p>Decide where files live on disk (example):</p>
+<ul>
+<li><code>.data/sessions/&lt;sanitized-session-key&gt;.jsonl</code></li>
+</ul>
+<p>Do this now:</p>
+<ul>
+<li>choose one base sessions directory</li>
+<li>keep it outside app-specific folders so CLI/web both hit the same store</li>
+</ul>
+<p>Checkpoint:</p>
+<ul>
+<li>both channels can resolve the same absolute sessions directory.</li>
+</ul>
+<hr />
+<h3 id="part-22-build-session-key-builder-first">Part 2.2: Build session key builder first</h3>
+<p>In <code>sessions/keys.ts</code>, define one function that always builds keys the same way.</p>
+<p>Inputs:</p>
+<ul>
+<li><code>agentId</code></li>
+<li><code>scope</code> (<code>channel-peer</code>, <code>peer</code>, <code>global</code>)</li>
+<li><code>channelId</code></li>
+<li><code>peerId</code></li>
+</ul>
+<p>Output format (stable string):</p>
+<ul>
+<li><code>agent:&lt;agentId&gt;:scope:&lt;scope&gt;:peer:&lt;peerId&gt;:channel:&lt;channelId&gt;</code></li>
+</ul>
+<p>Also add sanitization for filesystem safety:</p>
+<ul>
+<li>replace <code>/</code>, <code>:</code>, <code>\\</code>, whitespace with <code>_</code></li>
+</ul>
+<p>Checkpoint:</p>
+<ul>
+<li>same inputs always produce same key</li>
+<li>“dangerous” characters are neutralized</li>
+</ul>
+<hr />
+<h3 id="part-23-implement-read-path-load-in-sessionstore">Part 2.3: Implement read path (<code>load</code>) in <code>SessionStore</code></h3>
+<p>Start with read before write.</p>
+<p>Behavior:</p>
+<ul>
+<li>if file does not exist, return empty message list</li>
+<li>read line-by-line</li>
+<li>trim line</li>
+<li>skip empty lines</li>
+<li>try parse JSON</li>
+<li>validate shape is a <code>Message</code></li>
+<li>skip malformed lines, continue</li>
+</ul>
+<p>Why this order:</p>
+<ul>
+<li>you can safely introspect existing data before mutating anything</li>
+</ul>
+<p>Checkpoint:</p>
+<ul>
+<li>loading an empty/missing session returns <code>[]</code></li>
+<li>loading mixed good/bad lines returns only good messages</li>
+</ul>
+<hr />
+<h3 id="part-24-implement-append-path-append-in-sessionstore">Part 2.4: Implement append path (<code>append</code>) in <code>SessionStore</code></h3>
+<p>Then add append-only writes.</p>
+<p>Behavior:</p>
+<ul>
+<li>ensure parent directory exists</li>
+<li>serialize one message as JSON</li>
+<li>append exactly one line plus newline</li>
+</ul>
+<p>Important:</p>
+<ul>
+<li>do not read-modify-write for normal turns</li>
+<li>append is the default write mode</li>
+</ul>
+<p>Checkpoint:</p>
+<ul>
+<li>appending twice creates two lines</li>
+<li>file stays valid JSONL</li>
+</ul>
+<hr />
+<h3 id="part-25-add-full-rewrite-path-save-for-future-compaction">Part 2.5: Add full rewrite path (<code>save</code>) for future compaction</h3>
+<p>You need a controlled rewrite function, but only for explicit operations (like compaction).</p>
+<p>Core rule for this step: write to the persistent canonical session file path directly. Do not use temporary files for this kata step.</p>
+<p>Behavior:</p>
+<ul>
+<li>overwrite the persistent session file with provided messages</li>
+<li>write one JSON object per line (JSONL)</li>
+<li>keep deterministic ordering from the input array</li>
+<li>no temp file workflow; no temp-to-rename flow in this step</li>
+</ul>
+<p>Checkpoint:</p>
+<ul>
+<li><code>save</code> produces deterministic line order</li>
+<li><code>load(save(messages))</code> round-trips correctly</li>
+<li>the canonical session file path is the only file touched</li>
+</ul>
+<hr />
+<h3 id="part-26-create-shared-handlemessage-orchestrator">Part 2.6: Create shared <code>handleMessage</code> orchestrator</h3>
+<p>Core problem:</p>
+<p>Today, channel adapters can drift into owning conversation state rules. That creates inconsistent behavior between CLI and web, and makes bugs hard to reason about.</p>
+<p>Approach:</p>
+<p>Create one shared orchestrator in <code>packages/agent-core/src/gateway/handle-message.ts</code>. Every channel calls it. This centralizes routing, session state, model execution, and persistence in one place.</p>
+<p>Didactic step-by-step pipeline:</p>
+<ol>
+<li>Normalize inputs: resolve effective routing info (<code>agentId</code>, <code>scope</code>, <code>channelId</code>, <code>peerId</code>). Explain in code comments that this guarantees one canonical routing context per request.</li>
+<li>Build session identity: construct a deterministic session key from normalized routing info. This is how all channels map to the same conversation.</li>
+<li>Load state from storage: read prior transcript messages from <code>SessionStore</code> using that key.</li>
+<li>Apply current user event: append the incoming user message in memory to form the turn input.</li>
+<li>Execute domain logic: call <code>runAgentTurn</code> with the assembled message list.</li>
+<li>Persist resulting state: write new transcript state through <code>SessionStore</code> (append for normal turns, <code>save</code> for explicit full-rewrite operations).</li>
+<li>Return contract output: respond with assistant text plus session metadata needed by adapters.</li>
+</ol>
+<p>Channel adapters call this; they should not own transcript logic.</p>
+<p>Adapters:</p>
+<ul>
+<li>CLI: <code>apps/cli/src/ui/app.tsx</code> (or a thin adapter module)</li>
+<li>Web: <code>apps/web/app/api/agent/route.ts</code></li>
+</ul>
+<p>Validation:</p>
+<ul>
+<li>Unit test each stage boundary: routing normalization, session-key determinism, store interaction, and response mapping.</li>
+<li>Integration test one end-to-end turn through <code>handleMessage</code> with mocked <code>runAgentTurn</code>.</li>
+<li>Cross-channel test: same logical input via CLI and web produces equivalent persisted transcript behavior.</li>
+</ul>
+<p>Why this is enterprise-grade:</p>
+<ul>
+<li>single orchestration path reduces channel drift and operational surprises</li>
+<li>deterministic session identity improves auditability and incident debugging</li>
+<li>clear boundaries (adapter vs core) support safer scaling and future channels</li>
+<li>testable stage contracts enable reliable refactors under change</li>
+</ul>
+<p>Checkpoint:</p>
+<ul>
+<li>same input through CLI or web hits same shared pipeline.</li>
+</ul>
+<hr />
+<h3 id="part-27-change-web-contract-to-server-owned-sessions">Part 2.7: Change web contract to server-owned sessions</h3>
+<p>Current stepping stone may still send <code>messages</code> from browser.
+For Part 2 completion, stop that.</p>
+<p>Preferred request shape:</p>
+<ul>
+<li><code>peerId</code></li>
+<li><code>text</code></li>
+<li>optional <code>agentId</code></li>
+<li>optional <code>scope</code></li>
+</ul>
+<p>Server does:</p>
+<ul>
+<li>load prior messages from session store</li>
+<li>run turn</li>
+<li>persist</li>
+</ul>
+<p>Checkpoint:</p>
+<ul>
+<li>browser refresh does not lose session continuity</li>
+<li>web and CLI can continue one shared conversation (same <code>peerId</code> + scope)</li>
+</ul>
+<hr />
+<h3 id="suggested-test-sequence-small-and-safe">Suggested test sequence (small and safe)</h3>
+<ol>
+<li>Unit test <code>buildSessionKey</code> deterministic + sanitization behavior.</li>
+<li>Unit test <code>SessionStore.load</code> with malformed lines.</li>
+<li>Unit test <code>SessionStore.append</code> line count and newline correctness.</li>
+<li>Unit test <code>SessionStore.save</code> round-trip with <code>load</code>.</li>
+<li>Integration test <code>handleMessage</code> with mocked <code>runAgentTurn</code>.</li>
+<li>Cross-channel test: CLI turn then web turn on same session key.</li>
+</ol>
+<p>Acceptance for Part 2:</p>
+<ul>
+<li>CLI says: “My name is Alex.”</li>
+<li>Web (same <code>peerId</code> scope) asks: “What is my name?”</li>
+<li>Assistant answers: “Alex.”</li>
+<li>Session file shows append-only JSONL transcript.</li>
+</ul>
+<hr />
+<h2 id="part-3-composable-prompts-agentsmd-soulmd-toolsmd">Part 3: Composable Prompts (<code>AGENTS.md</code>, <code>SOUL.md</code>, <code>TOOLS.md</code>)</h2>
+<p>Move system prompt assembly to <code>agent-core</code>:</p>
+<ul>
+<li><code>packages/agent-core/src/config/prompt-composer.ts</code></li>
+<li>optional per-agent workspace directories</li>
+</ul>
+<p>Acceptance:</p>
+<ul>
+<li>Prompt behavior changes in both CLI and web after editing workspace files.</li>
+</ul>
+<hr />
+<h2 id="part-4-tool-policy-permission-controls">Part 4: Tool Policy + Permission Controls</h2>
+<p>Shared policy in <code>agent-core/tools/policy.ts</code>:</p>
+<ul>
+<li>allow/deny/review modes</li>
+<li>optional operator approval hooks</li>
+</ul>
+<p>Acceptance:</p>
+<ul>
+<li>Same blocked tool behavior appears in both channels.</li>
+</ul>
+<hr />
+<h2 id="part-5-context-compaction">Part 5: Context Compaction</h2>
+<p>Build compaction in <code>packages/agent-core/src/sessions/compactor.ts</code> with token budget checks.</p>
+<p>Acceptance:</p>
+<ul>
+<li>Long conversations compact identically no matter which channel generated them.</li>
+</ul>
+<hr />
+<h2 id="part-6-long-term-memory">Part 6: Long-Term Memory</h2>
+<p>File-backed memory in <code>packages/agent-core/src/memory/store.ts</code>:</p>
+<ul>
+<li><code>save_memory</code></li>
+<li><code>memory_search</code></li>
+</ul>
+<p>Acceptance:</p>
+<ul>
+<li>Memory written in CLI is discoverable in web, and vice versa.</li>
+</ul>
+<hr />
+<h2 id="part-7-gateway-hardening-not-first-introduction">Part 7: Gateway Hardening (Not First Introduction)</h2>
+<p>You already have a gateway concept once <code>handleMessage</code> exists.<br />
+Now harden it:</p>
+<ul>
+<li>per-session locking</li>
+<li>idempotency key support (optional)</li>
+<li>structured logs and errors</li>
+</ul>
+<p>Acceptance:</p>
+<ul>
+<li>Concurrent requests for the same session are serialized.</li>
+</ul>
+<hr />
+<h2 id="part-8-multi-agent-routing">Part 8: Multi-Agent Routing</h2>
+<p>Add <code>packages/agent-core/src/routing/router.ts</code>:</p>
+<ul>
+<li><code>/research ...</code></li>
+<li><code>/agent:&lt;name&gt; ...</code></li>
+</ul>
+<p>Acceptance:</p>
+<ul>
+<li>Different agent configs, separate session histories, shared memory.</li>
+</ul>
+<hr />
+<h2 id="session-scoping-model-important-for-cli-web">Session Scoping Model (Important for CLI + Web)</h2>
+<p>Support these scopes in key builder:</p>
+<ol>
+<li><code>channel-peer</code> (default safe isolation)</li>
+<li><code>peer</code> (cross-channel continuity)</li>
+<li><code>global</code> (shared bot state, use carefully)</li>
+</ol>
+<p>Example key format:</p>
+<p><code>agent:&lt;agentId&gt;:scope:&lt;scope&gt;:peer:&lt;peerId&gt;:channel:&lt;channelId&gt;</code></p>
+<hr />
+<h2 id="api-contract-recommendation">API Contract Recommendation</h2>
+<p>For web API, use:</p>
+<pre><code class="language-json">{
+  &quot;peerId&quot;: &quot;alex&quot;,
+  &quot;text&quot;: &quot;What is my name?&quot;,
+  &quot;agentId&quot;: &quot;main&quot;,
+  &quot;scope&quot;: &quot;peer&quot;
+}
+</code></pre>
+<p>Do not use:</p>
+<ul>
+<li>browser-supplied full transcript as canonical state.</li>
+</ul>
+<hr />
+<h2 id="migration-plan-from-current-codebase">Migration Plan from Current Codebase</h2>
+<ol>
+<li>Keep loop/types/defaults in <code>packages/agent-core</code> (already done).</li>
+<li>Add <code>sessions/*</code> and <code>gateway/handle-message.ts</code> in <code>packages/agent-core</code>.</li>
+<li>Move session ownership from app state to shared handler.</li>
+<li>Change web request contract to <code>{ peerId, text, agentId, scope }</code> and stop sending full <code>messages</code>.</li>
+<li>Keep CLI and web as presentation/adapters only.</li>
+</ol>
+<hr />
+<h2 id="definition-of-done">Definition of Done</h2>
+<p>You are done when:</p>
+<ol>
+<li>No app imports runtime files from the other app.</li>
+<li>Shared runtime has tests for loop, config, sessions, and handler.</li>
+<li>CLI and web can continue one conversation using shared session keys.</li>
+<li>Behavior/tool availability is consistent across both channels.</li>
+</ol>
+<hr />
+<h2 id="practical-notes">Practical Notes</h2>
+<ul>
+<li>Keep all shared contracts in one package (<code>types.ts</code>, tool definitions, session schema).</li>
+<li>Prefer append-only JSONL for sessions; use overwrite only for compaction.</li>
+<li>Add one cross-channel integration test early; it will catch drift faster than unit tests.</li>
+</ul>
+<p>This kata path keeps your OpenClaw learning goals while matching your real architecture today.</p>
+    </article>
+  </main>
+</body>
+</html>

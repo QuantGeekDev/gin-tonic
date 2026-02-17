@@ -1,0 +1,9 @@
+node_modules/
+.pnpm-store/
+apps/*/node_modules/
+apps/*/.next/
+apps/*/dist/
+apps/*/coverage/
+apps/cli/.env
+openclaw-architecture-kata.md
+new-openclaw-architecture-kata.md

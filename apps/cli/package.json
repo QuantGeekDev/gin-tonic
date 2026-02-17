@@ -1,0 +1,39 @@
+{
+  "name": "jihn",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "prebuild": "npm run build --workspace=@jihn/agent-core",
+    "build": "tsc",
+    "start": "node --env-file=.env dist/index.js",
+    "dev": "tsx --env-file=.env --watch src/index.ts",
+    "anthropic:sample": "tsx --env-file=.env src/examples/anthropic-samples.ts",
+    "test": "npm run build && NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs",
+    "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs --watch",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@jihn/agent-core": "file:../../packages/agent-core",
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@types/react": "^19.2.14",
+    "dotenv": "^17.3.1",
+    "ink": "^6.7.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^25.2.3",
+    "eslint": "^9.0.0",
+    "jest": "^30.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.0.0"
+  }
+}
