@@ -1,124 +1,124 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Message } from "@jihn/agent-core";
+import { renderMessageContent } from "./lib/agent-client";
+import { useAgentSession } from "./hooks/use-agent-session";
+import { useMemoryDebug } from "./hooks/use-memory-debug";
+import { useMcpDebug } from "./hooks/use-mcp-debug";
+import { useTelegramDebug } from "./hooks/use-telegram-debug";
+import type { WebSessionScope } from "./types/agent-api";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { ThemeToggle } from "@/components/theme-toggle";
 
-const DEFAULT_MAX_TURNS = 20;
-const DEFAULT_MAX_TOKENS = 1024;
-
-interface ToolMeta {
-  name: string;
-  description: string;
+function StatusPill({ label, value }: { label: string; value: string }) {
+  return (
+    <Badge variant="outline" className="gap-1 rounded-full px-3 py-1 text-xs">
+      {label}
+      <span className="font-mono text-foreground">{value}</span>
+    </Badge>
+  );
 }
 
-interface AgentMetaResponse {
-  model: string;
-  tools: ToolMeta[];
-}
-
-interface AgentTurnResponse {
-  text: string;
-  messages: Message[];
-  usage: {
-    estimatedInputTokens: number;
-    inputTokens: number;
-    outputTokens: number;
-  };
-  toolEvents: Array<
-    | { kind: "call"; name: string; input: Record<string, unknown> }
-    | { kind: "result"; name: string; output: string }
-  >;
-  model: string;
-  session: {
-    agentId: string;
-    scope: string;
-    channelId: string;
-    peerId: string;
-    sessionKey: string;
-  };
-  persistenceMode: "append" | "save";
-}
-
-const PEER_ID_STORAGE_KEY = "jihn.peerId";
-
-function createPeerId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `web-${crypto.randomUUID()}`;
+function parseErrorWithRequestId(errorText: string): {
+  message: string;
+  requestId: string | null;
+} {
+  const match = /\(requestId:\s*([^)]+)\)\s*$/.exec(errorText);
+  if (!match) {
+    return { message: errorText, requestId: null };
   }
-  return `web-${Date.now()}`;
-}
-
-function renderMessageContent(content: Message["content"]): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((block) => {
-      if (block.type === "text") {
-        return block.text;
-      }
-      if (block.type === "tool_use") {
-        return `🔧 ${block.name} ${JSON.stringify(block.input)}`;
-      }
-      if (block.type === "tool_result") {
-        return `→ ${block.content}`;
-      }
-      return JSON.stringify(block);
-    })
-    .join("\n");
+  return {
+    message: errorText.replace(/\s*\(requestId:\s*([^)]+)\)\s*$/, "").trim(),
+    requestId: match[1]?.trim() ?? null,
+  };
 }
 
 export default function Home() {
-  const [meta, setMeta] = useState<AgentMetaResponse | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [toolLog, setToolLog] = useState<string[]>([]);
-  const [peerId, setPeerId] = useState("web-user");
-  const [scope, setScope] = useState<"peer" | "channel-peer" | "global">("peer");
-  const [agentId, setAgentId] = useState("main");
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [usage, setUsage] = useState({
-    estimatedInputTokens: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-  });
+  const [debugMode, setDebugMode] = useState(true);
+  const [copiedRequestId, setCopiedRequestId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const storedPeerId = window.localStorage.getItem(PEER_ID_STORAGE_KEY)?.trim();
-    if (storedPeerId && storedPeerId.length > 0) {
-      setPeerId(storedPeerId);
-      return;
-    }
-    const generated = createPeerId();
-    window.localStorage.setItem(PEER_ID_STORAGE_KEY, generated);
-    setPeerId(generated);
-  }, []);
+  const {
+    meta,
+    messages,
+    toolLog,
+    peerId,
+    scope,
+    agentId,
+    input,
+    loading,
+    debugLoading,
+    error,
+    usage,
+    lastCompaction,
+    lastTurn,
+    simulation,
+    setScope,
+    setAgentId,
+    setInput,
+    setError,
+    startNewSession,
+    reloadMeta,
+    sendMessage,
+    simulateCompaction,
+  } = useAgentSession();
 
-  const startNewSession = (): void => {
-    const nextPeer = createPeerId();
-    window.localStorage.setItem(PEER_ID_STORAGE_KEY, nextPeer);
-    setPeerId(nextPeer);
-    setMessages([]);
-    setToolLog([]);
-    setUsage({
-      estimatedInputTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-    });
-    setError(null);
-  };
+  const {
+    memoryQuery,
+    memoryText,
+    memoryNamespace,
+    memoryTags,
+    memoryLoading,
+    memorySaving,
+    memoryResults,
+    setMemoryQuery,
+    setMemoryText,
+    setMemoryNamespace,
+    setMemoryTags,
+    searchMemory,
+    saveMemory,
+  } = useMemoryDebug(setError);
 
-  useEffect(() => {
-    const loadMeta = async (): Promise<void> => {
-      const response = await fetch("/api/agent", { method: "GET" });
-      const json = (await response.json()) as AgentMetaResponse;
-      setMeta(json);
-    };
-
-    void loadMeta();
-  }, []);
+  const {
+    mcpSnapshot,
+    mcpLoading,
+    mcpRefreshing,
+    serverId,
+    serverName,
+    serverUrl,
+    authMode,
+    bearerToken,
+    oauthScope,
+    oauthClientId,
+    oauthClientSecret,
+    setServerId,
+    setServerName,
+    setServerUrl,
+    setAuthMode,
+    setBearerToken,
+    setOauthScope,
+    setOauthClientId,
+    setOauthClientSecret,
+    refreshMcp,
+    addServer,
+    removeServer,
+    beginOAuth,
+  } = useMcpDebug(setError);
+  const {
+    telegramDebug,
+    telegramLoading,
+    telegramRefreshing,
+    refreshTelegramDebug,
+  } = useTelegramDebug(setError);
 
   const transcript = useMemo(() => {
     return messages.map((message) => ({
@@ -127,209 +127,533 @@ export default function Home() {
     }));
   }, [messages]);
 
-  const sendMessage = async (): Promise<void> => {
-    const trimmed = input.trim();
-    if (trimmed.length === 0 || loading) {
-      return;
+  useEffect(() => {
+    const stored = window.localStorage.getItem("jihn.debugMode");
+    setDebugMode(stored !== "false");
+  }, []);
+
+  const toggleDebugMode = (): void => {
+    setDebugMode((current) => {
+      const next = !current;
+      window.localStorage.setItem("jihn.debugMode", String(next));
+      return next;
+    });
+  };
+
+  const parsedError = useMemo(() => {
+    if (!error) {
+      return null;
     }
+    return parseErrorWithRequestId(error);
+  }, [error]);
 
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch("/api/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: trimmed,
-          peerId,
-          scope,
-          agentId,
-          channelId: "web",
-          maxTurns: DEFAULT_MAX_TURNS,
-          maxTokens: DEFAULT_MAX_TOKENS,
-        }),
-      });
-
-      const json = (await response.json()) as AgentTurnResponse | { error: string };
-      if (!response.ok || "error" in json) {
-        throw new Error("error" in json ? json.error : `HTTP ${response.status}`);
-      }
-
-      setMessages(json.messages);
-      setUsage(json.usage);
-      setToolLog((prev) => [
-        ...prev,
-        ...json.toolEvents.map((event) =>
-          event.kind === "call"
-            ? `🔧 ${event.name}: ${JSON.stringify(event.input)}`
-            : `→ ${event.name}: ${event.output}`,
-        ),
-      ]);
-      setInput("");
-    } catch (requestError) {
-      const message =
-        requestError instanceof Error ? requestError.message : String(requestError);
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
+  const copyRequestId = async (requestId: string): Promise<void> => {
+    await navigator.clipboard.writeText(requestId);
+    setCopiedRequestId(requestId);
+    window.setTimeout(() => {
+      setCopiedRequestId((current) => (current === requestId ? null : current));
+    }, 1200);
   };
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_#19313a,_transparent_40%),radial-gradient(circle_at_bottom_right,_#40221f,_transparent_35%),linear-gradient(145deg,_#0f1418,_#111f26_45%,_#1e1613)] text-zinc-100">
-      <main className="mx-auto flex h-screen w-full max-w-7xl flex-col gap-4 px-4 py-4">
-        <header className="rounded-2xl border border-cyan-300/30 bg-black/30 px-5 py-4 backdrop-blur">
-          <h1 className="font-mono text-2xl tracking-wide text-cyan-200">Jihn Dashboard</h1>
-          <p className="text-sm text-zinc-300">
-            Local operator console for the Jihn agent loop
-          </p>
-        </header>
-
-        <section className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
-          <div className="flex min-h-0 flex-col rounded-2xl border border-white/15 bg-black/35 backdrop-blur">
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-              <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-cyan-100">
-                Scrollback
-              </h2>
-              <button
-                className="rounded-md border border-white/20 px-3 py-1 text-xs text-zinc-200 hover:bg-white/10"
-                onClick={startNewSession}
-              >
-                Clear + New Session
-              </button>
+    <div className="min-h-screen bg-background text-foreground">
+      <main className="mx-auto flex h-screen max-w-[1550px] flex-col gap-4 p-4">
+        <Card>
+          <CardHeader className="space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-xl">Jihn Control Center</CardTitle>
+                <CardDescription>
+                  Unified chat workspace with operational debugging controls.
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <ThemeToggle />
+                <Button
+                  variant={debugMode ? "default" : "outline"}
+                  size="sm"
+                  onClick={toggleDebugMode}
+                >
+                  Debug Mode {debugMode ? "On" : "Off"}
+                </Button>
+              </div>
             </div>
+            <div className="flex flex-wrap gap-2">
+              <StatusPill label="provider" value={meta?.provider ?? "loading"} />
+              <StatusPill label="model" value={meta?.model ?? "loading"} />
+              <StatusPill label="scope" value={scope} />
+              <StatusPill label="turns" value={String(Math.floor(messages.length / 2))} />
+            </div>
+          </CardHeader>
+        </Card>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-              {transcript.length === 0 ? (
-                <p className="text-sm text-zinc-400">
-                  No messages yet. Ask a question to start a turn.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {transcript.map((line, index) => (
-                    <div
-                      key={`${line.role}-${index}`}
-                      className="rounded-xl border border-white/10 bg-white/5 p-3"
-                    >
-                      <p className="mb-1 text-xs uppercase tracking-[0.18em] text-zinc-400">
-                        {line.role}
-                      </p>
-                      <p className="whitespace-pre-wrap text-sm leading-6 text-zinc-100">
-                        {line.text}
-                      </p>
-                    </div>
-                  ))}
+        <section className="grid min-h-0 flex-1 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_440px]">
+          <Card className="min-h-0 overflow-hidden">
+            <CardHeader className="border-b">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <CardTitle>Conversation</CardTitle>
+                  <CardDescription>Session transcript and assistant responses</CardDescription>
                 </div>
-              )}
-            </div>
-
-            <div className="border-t border-white/10 p-4">
-              <textarea
-                className="h-28 w-full resize-none rounded-xl border border-cyan-400/30 bg-black/40 p-3 text-sm text-zinc-100 outline-none ring-cyan-300/50 placeholder:text-zinc-500 focus:ring-2"
-                placeholder="Ask Jihn anything. Example: What's 1337 * 42?"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void sendMessage();
-                  }
-                }}
-              />
-              <div className="mt-3 flex items-center justify-between">
-                <p className="text-xs text-zinc-400">Enter to send, Shift+Enter newline</p>
-                <button
-                  className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={loading}
-                  onClick={() => {
-                    void sendMessage();
-                  }}
-                >
-                  {loading ? "Running..." : "Send"}
-                </button>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => void reloadMeta()}>
+                    Refresh Runtime
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={startNewSession}>
+                    New Session
+                  </Button>
+                </div>
               </div>
-            </div>
-          </div>
-
-          <aside className="flex min-h-0 flex-col gap-4">
-            <div className="rounded-2xl border border-white/15 bg-black/35 p-4 backdrop-blur">
-              <h3 className="mb-2 font-mono text-sm uppercase tracking-[0.2em] text-amber-200">
-                Operator
-              </h3>
-              <p className="text-sm text-zinc-200">
-                Model: <span className="font-mono text-cyan-200">{meta?.model ?? "..."}</span>
-              </p>
-              <p className="text-sm text-zinc-200">
-                Peer: <span className="font-mono text-cyan-200">{peerId}</span>
-              </p>
-              <p className="text-sm text-zinc-200">Turns: {Math.floor(messages.length / 2)}</p>
-              <div className="mt-3 space-y-2">
-                <label className="block text-xs text-zinc-300">
-                  Scope
-                  <select
-                    className="mt-1 w-full rounded border border-white/20 bg-black/30 p-1 text-xs"
-                    value={scope}
-                    onChange={(event) =>
-                      setScope(event.target.value as "peer" | "channel-peer" | "global")
-                    }
-                  >
-                    <option value="peer">peer</option>
-                    <option value="channel-peer">channel-peer</option>
-                    <option value="global">global</option>
-                  </select>
-                </label>
-                <label className="block text-xs text-zinc-300">
-                  Agent ID
-                  <input
-                    className="mt-1 w-full rounded border border-white/20 bg-black/30 p-1 text-xs"
-                    value={agentId}
-                    onChange={(event) => setAgentId(event.target.value)}
-                  />
-                </label>
-                <button
-                  className="rounded-md border border-white/20 px-2 py-1 text-xs text-zinc-200 hover:bg-white/10"
-                  onClick={startNewSession}
-                >
-                  New Session ID
-                </button>
-              </div>
-              <p className="mt-3 text-xs text-zinc-400">
-                est_in {usage.estimatedInputTokens} | in {usage.inputTokens} | out{" "}
-                {usage.outputTokens}
-              </p>
-              {error ? <p className="mt-3 text-sm text-rose-300">Error: {error}</p> : null}
-            </div>
-
-            <div className="min-h-0 flex-1 rounded-2xl border border-white/15 bg-black/35 p-4 backdrop-blur">
-              <h3 className="mb-2 font-mono text-sm uppercase tracking-[0.2em] text-cyan-100">
-                Tool Activity
-              </h3>
-              <div className="max-h-48 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-2">
-                {toolLog.length === 0 ? (
-                  <p className="text-xs text-zinc-500">No tool calls yet.</p>
+            </CardHeader>
+            <CardContent className="flex min-h-0 flex-1 flex-col p-0">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-muted/20 p-4">
+                {transcript.length === 0 ? (
+                  <Card className="border-dashed">
+                    <CardContent className="p-4 text-sm text-muted-foreground">
+                      No conversation yet. Send a message to begin.
+                    </CardContent>
+                  </Card>
                 ) : (
-                  <ul className="space-y-1 text-xs text-zinc-300">
-                    {toolLog.slice(-20).map((line, index) => (
-                      <li key={`${line}-${index}`}>{line}</li>
-                    ))}
-                  </ul>
+                  transcript.map((line, index) => {
+                    const isUser = line.role === "user";
+                    return (
+                      <div
+                        key={`${line.role}-${index}`}
+                        className={`max-w-[86%] rounded-xl border px-4 py-3 text-sm leading-6 shadow-sm ${
+                          isUser
+                            ? "ml-auto border-primary/40 bg-primary/10"
+                            : "mr-auto border-border bg-card"
+                        }`}
+                      >
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          {line.role}
+                        </p>
+                        <p className="whitespace-pre-wrap">{line.text}</p>
+                      </div>
+                    );
+                  })
                 )}
               </div>
-            </div>
 
-            <div className="rounded-2xl border border-white/15 bg-black/35 p-4 backdrop-blur">
-              <h3 className="mb-2 font-mono text-sm uppercase tracking-[0.2em] text-lime-200">
-                Registered Tools
-              </h3>
-              <ul className="space-y-2 text-sm text-zinc-200">
-                {meta?.tools.map((tool) => (
-                  <li key={tool.name} className="rounded-lg border border-white/10 bg-white/5 p-2">
-                    <p className="font-mono text-cyan-200">{tool.name}</p>
-                    <p className="text-xs text-zinc-400">{tool.description}</p>
-                  </li>
-                )) ?? <li className="text-zinc-500">Loading tools...</li>}
-              </ul>
+              <div className="border-t p-4">
+                <Textarea
+                  className="h-28 resize-none"
+                  placeholder="Ask Jihn anything. Example: summarize the last decision with risks and actions."
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void sendMessage();
+                    }
+                  }}
+                />
+                <div className="mt-3 flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">Enter sends · Shift+Enter newline</p>
+                  <Button onClick={() => void sendMessage()} disabled={loading}>
+                    {loading ? "Running Turn..." : "Send"}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <aside className="min-h-0 overflow-y-auto">
+            <div className="space-y-4 pr-1">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Runtime Control</CardTitle>
+                  <CardDescription>Session scope and agent routing context</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <label className="block text-xs text-muted-foreground">
+                    Scope
+                    <select
+                      className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-xs"
+                      value={scope}
+                      onChange={(event) => setScope(event.target.value as WebSessionScope)}
+                    >
+                      <option value="peer">peer</option>
+                      <option value="channel-peer">channel-peer</option>
+                      <option value="global">global</option>
+                    </select>
+                  </label>
+                  <label className="block text-xs text-muted-foreground">
+                    Agent ID
+                    <Input value={agentId} onChange={(event) => setAgentId(event.target.value)} />
+                  </label>
+                  <label className="block text-xs text-muted-foreground">
+                    Peer ID
+                    <Input value={peerId} readOnly className="bg-muted" />
+                  </label>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Turn Debug</CardTitle>
+                  <CardDescription>Latest request metrics and runtime state</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-1 text-xs text-muted-foreground">
+                  <p>est_in {usage.estimatedInputTokens} | in {usage.inputTokens} | out {usage.outputTokens}</p>
+                  <p>latency: {lastTurn ? `${lastTurn.latencyMs}ms` : "-"}</p>
+                  <p>persistence: {lastTurn?.persistenceMode ?? "-"}</p>
+                  <p>idempotency hit: {lastTurn ? String(lastTurn.idempotencyHit) : "-"}</p>
+                  <p className="break-all">session key: {lastTurn?.session.sessionKey ?? "-"}</p>
+                  {lastTurn ? <p>completed: {lastTurn.completedAt}</p> : null}
+                  {parsedError ? (
+                    <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-destructive">
+                      <p>{parsedError.message}</p>
+                      {parsedError.requestId
+                        ? (() => {
+                            const requestId = parsedError.requestId;
+                            return (
+                              <div className="mt-2 flex items-center gap-2">
+                                <code className="rounded bg-background/60 px-2 py-1 text-[11px] text-destructive">
+                                  requestId: {requestId}
+                                </code>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 border-destructive/40 px-2 text-[11px]"
+                                  onClick={() => void copyRequestId(requestId)}
+                                >
+                                  {copiedRequestId === requestId ? "Copied" : "Copy ID"}
+                                </Button>
+                              </div>
+                            );
+                          })()
+                        : null}
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+
+              {debugMode ? (
+                <>
+                  <Card>
+                    <CardHeader className="flex-row items-center justify-between space-y-0">
+                      <div>
+                        <CardTitle>Compaction Lab</CardTitle>
+                        <CardDescription>Compare compaction output across channels</CardDescription>
+                      </div>
+                      <Button variant="outline" size="sm" disabled={debugLoading} onClick={() => void simulateCompaction()}>
+                        {debugLoading ? "Simulating..." : "Simulate"}
+                      </Button>
+                    </CardHeader>
+                    <CardContent className="space-y-1 text-xs text-muted-foreground">
+                      {lastCompaction ? (
+                        <>
+                          <p>last turn: {lastCompaction.compacted ? "compacted" : "not compacted"}</p>
+                          <p>strategy: {lastCompaction.strategy}</p>
+                          <p>tokens: {lastCompaction.beforeTokens} {"->"} {lastCompaction.afterTokens}</p>
+                          <p>messages: {lastCompaction.beforeMessageCount} {"->"} {lastCompaction.afterMessageCount}</p>
+                        </>
+                      ) : (
+                        <p>No compaction run yet.</p>
+                      )}
+                      {simulation ? (
+                        <Card className="mt-2 bg-muted/40">
+                          <CardContent className="p-3">
+                            <p>cross-channel identical: {String(simulation.identical)}</p>
+                            <p>web: {simulation.web.beforeTokens} {"->"} {simulation.web.afterTokens} ({simulation.web.strategy})</p>
+                            {simulation.cli ? (
+                              <p>cli: {simulation.cli.beforeTokens} {"->"} {simulation.cli.afterTokens} ({simulation.cli.strategy})</p>
+                            ) : null}
+                          </CardContent>
+                        </Card>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Tool Trace</CardTitle>
+                      <CardDescription>Recent tool calls and outputs</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="max-h-36 overflow-y-auto rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+                        {toolLog.length === 0 ? (
+                          <p>No tool events.</p>
+                        ) : (
+                          <ul className="space-y-1">
+                            {toolLog.slice(-30).map((line, index) => (
+                              <li key={`${line}-${index}`} className="break-all">{line}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="flex-row items-center justify-between space-y-0">
+                      <div>
+                        <CardTitle>Telegram Adapter</CardTitle>
+                        <CardDescription>Health and recent channel delivery events</CardDescription>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={telegramRefreshing}
+                        onClick={() => void refreshTelegramDebug()}
+                      >
+                        {telegramRefreshing ? "Refreshing..." : "Refresh"}
+                      </Button>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-xs text-muted-foreground">
+                      {telegramLoading ? <p>Loading telegram adapter snapshot...</p> : null}
+                      {telegramDebug ? (
+                        <>
+                          <p>
+                            status: {telegramDebug.running ? "running" : "stopped"} | mode:{" "}
+                            {telegramDebug.transportMode}
+                          </p>
+                          <p>
+                            received: {telegramDebug.stats.received} | replied:{" "}
+                            {telegramDebug.stats.replied} | failed: {telegramDebug.stats.failed}
+                          </p>
+                          <p>
+                            blocked: {telegramDebug.stats.blocked} | retries:{" "}
+                            {telegramDebug.stats.retries} | queue: {telegramDebug.outbound.queueDepth}
+                          </p>
+                          <p>snapshot: {telegramDebug.generatedAt}</p>
+                          <div className="max-h-36 overflow-y-auto rounded-md border bg-muted/30 p-2">
+                            {telegramDebug.recentEvents.length === 0 ? (
+                              <p>No events recorded.</p>
+                            ) : (
+                              <ul className="space-y-1">
+                                {telegramDebug.recentEvents.slice(0, 40).map((event, index) => (
+                                  <li key={`${event.timestamp}-${event.event}-${index}`} className="break-all">
+                                    [{event.level}] {event.event} @ {event.timestamp}
+                                    {event.updateId !== undefined ? ` | update:${event.updateId}` : ""}
+                                    {event.chatId !== undefined ? ` | chat:${event.chatId}` : ""}
+                                    {event.detail ? ` | ${event.detail}` : ""}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <p>No telegram adapter snapshot found.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="flex-row items-center justify-between space-y-0">
+                      <div>
+                        <CardTitle>MCP Inspector</CardTitle>
+                        <CardDescription>Add/authenticate remote HTTP MCP servers</CardDescription>
+                      </div>
+                      <Button variant="outline" size="sm" disabled={mcpRefreshing} onClick={() => void refreshMcp()}>
+                        {mcpRefreshing ? "Refreshing..." : "Refresh"}
+                      </Button>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-xs text-muted-foreground">
+                      {mcpLoading ? <p>Loading MCP snapshot...</p> : null}
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input placeholder="server id" value={serverId} onChange={(event) => setServerId(event.target.value)} />
+                        <Input placeholder="display name" value={serverName} onChange={(event) => setServerName(event.target.value)} />
+                        <Input className="col-span-2" placeholder="https://server.example.com/mcp" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} />
+                        <select
+                          className="h-10 rounded-md border border-input bg-background px-2"
+                          value={authMode}
+                          onChange={(event) => setAuthMode(event.target.value as "none" | "bearer" | "oauth2")}
+                        >
+                          <option value="none">no auth</option>
+                          <option value="bearer">bearer token</option>
+                          <option value="oauth2">oauth2 (DCR/non-DCR)</option>
+                        </select>
+                        {authMode === "bearer" ? (
+                          <Input
+                            placeholder="Bearer token"
+                            value={bearerToken}
+                            onChange={(event) => setBearerToken(event.target.value)}
+                          />
+                        ) : null}
+                        {authMode === "oauth2" ? (
+                          <>
+                            <Input
+                              placeholder="scope (optional)"
+                              value={oauthScope}
+                              onChange={(event) => setOauthScope(event.target.value)}
+                            />
+                            <Input
+                              className="col-span-2"
+                              placeholder="client id (optional; needed for non-DCR servers)"
+                              value={oauthClientId}
+                              onChange={(event) => setOauthClientId(event.target.value)}
+                            />
+                            <Input
+                              className="col-span-2"
+                              placeholder="client secret (optional)"
+                              value={oauthClientSecret}
+                              onChange={(event) => setOauthClientSecret(event.target.value)}
+                            />
+                          </>
+                        ) : null}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void addServer()}>
+                          Save Server
+                        </Button>
+                        {authMode === "oauth2" ? (
+                          <Button size="sm" onClick={() => void beginOAuth(serverId)}>
+                            OAuth Connect
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      {mcpSnapshot ? (
+                        <>
+                          <p>snapshot: {mcpSnapshot.generatedAt}</p>
+                          <p>servers: {mcpSnapshot.servers.length}</p>
+                          <p>tools: {mcpSnapshot.tools.length}</p>
+                          <div className="space-y-2">
+                            {mcpSnapshot.servers.map((server) => (
+                              <Card key={server.id} className="bg-muted/40">
+                                <CardContent className="p-3">
+                                  <p className="font-mono">
+                                    {server.name ?? server.id} ({server.connected ? "connected" : "disconnected"})
+                                  </p>
+                                  <p className="break-all">{server.url}</p>
+                                  <p>auth: {server.authMode} ({server.authorized ? "authorized" : "not authorized"})</p>
+                                  <p>tools: {server.toolCount}</p>
+                                  {server.error
+                                    ? (() => {
+                                        const parsedServerError = parseErrorWithRequestId(server.error);
+                                        return (
+                                          <div className="mt-1 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-destructive">
+                                            <p>error: {parsedServerError.message}</p>
+                                            {parsedServerError.requestId
+                                              ? (() => {
+                                                  const requestId = parsedServerError.requestId;
+                                                  return (
+                                                    <div className="mt-2 flex items-center gap-2">
+                                                      <code className="rounded bg-background/60 px-2 py-1 text-[11px] text-destructive">
+                                                        requestId: {requestId}
+                                                      </code>
+                                                      <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        className="h-7 border-destructive/40 px-2 text-[11px]"
+                                                        onClick={() => void copyRequestId(requestId)}
+                                                      >
+                                                        {copiedRequestId === requestId ? "Copied" : "Copy ID"}
+                                                      </Button>
+                                                    </div>
+                                                  );
+                                                })()
+                                              : null}
+                                          </div>
+                                        );
+                                      })()
+                                    : null}
+                                  <div className="mt-2 flex gap-2">
+                                    {server.authMode === "oauth2" ? (
+                                      <Button size="sm" variant="outline" onClick={() => void beginOAuth(server.id)}>
+                                        OAuth Connect
+                                      </Button>
+                                    ) : null}
+                                    <Button size="sm" variant="destructive" onClick={() => void removeServer(server.id)}>
+                                      Remove
+                                    </Button>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </div>
+                          <div className="mt-3 rounded-md border bg-muted/30 p-2">
+                            <p className="mb-1 font-medium">Exposed tools</p>
+                            {mcpSnapshot.tools.length === 0 ? (
+                              <p>No tools discovered.</p>
+                            ) : (
+                              <ul className="space-y-1">
+                                {mcpSnapshot.tools.map((tool) => (
+                                  <li key={tool.exposedName} className="break-all">
+                                    <span className="font-mono">{tool.exposedName}</span>
+                                    {" <- "}
+                                    {tool.serverId}.{tool.remoteName}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <p>No MCP snapshot available.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Memory Lab</CardTitle>
+                      <CardDescription>Write and query long-term memory</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-xs">
+                      <label className="block text-muted-foreground">
+                        Namespace
+                        <Input value={memoryNamespace} onChange={(event) => setMemoryNamespace(event.target.value)} />
+                      </label>
+                      <label className="block text-muted-foreground">
+                        Save memory
+                        <Textarea
+                          className="h-20 resize-none"
+                          placeholder="User prefers concise responses and examples."
+                          value={memoryText}
+                          onChange={(event) => setMemoryText(event.target.value)}
+                        />
+                      </label>
+                      <label className="block text-muted-foreground">
+                        Tags
+                        <Input
+                          placeholder="preference, style"
+                          value={memoryTags}
+                          onChange={(event) => setMemoryTags(event.target.value)}
+                        />
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" disabled={memorySaving} onClick={() => void saveMemory()}>
+                          {memorySaving ? "Saving..." : "Save"}
+                        </Button>
+                        <Input
+                          className="flex-1"
+                          placeholder="Search memory"
+                          value={memoryQuery}
+                          onChange={(event) => setMemoryQuery(event.target.value)}
+                        />
+                        <Button size="sm" variant="outline" disabled={memoryLoading} onClick={() => void searchMemory()}>
+                          {memoryLoading ? "Searching..." : "Search"}
+                        </Button>
+                      </div>
+                      <div className="max-h-44 overflow-y-auto rounded-md border bg-muted/30 p-2 text-muted-foreground">
+                        {memoryResults.length === 0 ? (
+                          <p>No memory results yet.</p>
+                        ) : (
+                          <ul className="space-y-2">
+                            {memoryResults.map((item) => (
+                              <li key={item.id} className="rounded-md border bg-card p-2">
+                                <p className="font-mono text-[11px]">{item.namespace} · score {item.score}</p>
+                                <p className="mt-1 whitespace-pre-wrap">{item.text}</p>
+                                <p className="mt-1 text-[11px] text-muted-foreground">{item.createdAt}</p>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
+              ) : (
+                <Card>
+                  <CardContent className="p-4 text-xs text-muted-foreground">
+                    Debug mode is off. Turn it on from the header to access compaction, MCP, tool trace, and memory labs.
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </aside>
         </section>

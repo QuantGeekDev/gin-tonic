@@ -1,0 +1,29 @@
+{
+  "name": "jihn-channel-telegram",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "prebuild": "npm run build --workspace=@jihn/agent-core",
+    "build": "tsc",
+    "dev": "tsx --env-file=.env --watch src/index.ts",
+    "start": "node --env-file=.env dist/index.js",
+    "test": "npm run build && NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@jihn/agent-core": "file:../../packages/agent-core",
+    "dotenv": "^17.3.1",
+    "grammy": "^1.38.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^25.2.3",
+    "eslint": "^9.0.0",
+    "jest": "^30.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.0.0"
+  }
+}
