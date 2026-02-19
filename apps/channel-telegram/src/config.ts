@@ -1,8 +1,9 @@
 import { z } from "zod";
-import type { SessionScope } from "@jihn/agent-core";
+import type { ChannelAuthMode, SessionScope } from "@jihn/agent-core";
 
 const SessionScopeSchema = z.enum(["channel-peer", "peer", "global"] as const);
 const TransportModeSchema = z.enum(["polling", "webhook"] as const);
+const ChannelAuthModeSchema = z.enum(["off", "open", "pairing"] as const);
 const EnvBooleanSchema = z.preprocess((value) => {
   if (typeof value !== "string") {
     return value;
@@ -35,6 +36,16 @@ const TelegramChannelConfigSchema = z.object({
   allowedChatIds: z.string().optional(),
   debugFilePath: z.string().trim().min(1).default(`${process.cwd()}/.jihn/telegram-debug.json`),
   debugMaxEvents: z.coerce.number().int().min(10).max(500).default(120),
+  authMode: ChannelAuthModeSchema.default("off"),
+  authStoreFilePath: z
+    .string()
+    .trim()
+    .min(1)
+    .default(`${process.cwd()}/.jihn/channel-auth.json`),
+  authHashSecret: z.string().trim().min(1).optional(),
+  authCodeLength: z.coerce.number().int().min(4).max(10).default(6),
+  authCodeTtlMs: z.coerce.number().int().min(30_000).max(30 * 60_000).default(5 * 60_000),
+  authMaxAttempts: z.coerce.number().int().min(1).max(10).default(5),
 });
 
 export interface TelegramChannelConfig {
@@ -55,6 +66,12 @@ export interface TelegramChannelConfig {
   allowedChatIds: Set<number> | null;
   debugFilePath: string;
   debugMaxEvents: number;
+  authMode: ChannelAuthMode;
+  authStoreFilePath: string;
+  authHashSecret: string | null;
+  authCodeLength: number;
+  authCodeTtlMs: number;
+  authMaxAttempts: number;
 }
 
 function parseAllowedChatIds(raw: string | undefined): Set<number> | null {
@@ -94,6 +111,12 @@ export function loadTelegramChannelConfig(
     allowedChatIds: env.JIHN_TELEGRAM_ALLOWED_CHAT_IDS,
     debugFilePath: env.JIHN_TELEGRAM_DEBUG_FILE,
     debugMaxEvents: env.JIHN_TELEGRAM_DEBUG_MAX_EVENTS,
+    authMode: env.JIHN_CHANNEL_AUTH_MODE,
+    authStoreFilePath: env.JIHN_CHANNEL_AUTH_STORE_FILE,
+    authHashSecret: env.JIHN_CHANNEL_AUTH_SECRET,
+    authCodeLength: env.JIHN_CHANNEL_AUTH_CODE_LENGTH,
+    authCodeTtlMs: env.JIHN_CHANNEL_AUTH_CODE_TTL_MS,
+    authMaxAttempts: env.JIHN_CHANNEL_AUTH_MAX_ATTEMPTS,
   });
 
   if (parsed.transportMode === "webhook" && !parsed.webhookPublicBaseUrl) {
@@ -120,5 +143,11 @@ export function loadTelegramChannelConfig(
     allowedChatIds: parseAllowedChatIds(parsed.allowedChatIds),
     debugFilePath: parsed.debugFilePath,
     debugMaxEvents: parsed.debugMaxEvents,
+    authMode: parsed.authMode,
+    authStoreFilePath: parsed.authStoreFilePath,
+    authHashSecret: parsed.authHashSecret ?? null,
+    authCodeLength: parsed.authCodeLength,
+    authCodeTtlMs: parsed.authCodeTtlMs,
+    authMaxAttempts: parsed.authMaxAttempts,
   };
 }

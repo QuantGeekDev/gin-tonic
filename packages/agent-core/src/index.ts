@@ -1,5 +1,4 @@
 export {
-  DEFAULT_ANTHROPIC_MODEL,
   DEFAULT_MAX_TOKENS,
   DEFAULT_MAX_TURNS,
   DEFAULT_SYSTEM_PROMPT,
@@ -10,20 +9,212 @@ export { composeSystemPrompt } from "./config/prompt-composer.js";
 export type { ComposeSystemPromptOptions } from "./config/prompt-composer.js";
 export { runAgentTurn } from "./agent/loop.js";
 export { handleMessage } from "./gateway/handle-message.js";
+export { resolveAgentRoute } from "./routing/router.js";
+export { parseMcpServersFromEnv } from "./mcp/config.js";
+export { McpToolRegistry, isMcpToolName } from "./mcp/registry.js";
+export { McpServerStore } from "./mcp/store.js";
+export { McpServerManager } from "./mcp/manager.js";
+export { McpOAuthAuthorizationRequiredError } from "./mcp/oauth-provider.js";
+export {
+  createPostgresStorageClient,
+  getSharedPostgresStorageClient,
+  resolveDatabaseUrl,
+} from "./db/client.js";
+export {
+  PostgresGatewayIdempotencyStore,
+  PostgresMcpServerStore,
+  PostgresMemoryStore,
+  PostgresSessionLockManager,
+  PostgresSessionStore,
+  ensurePostgresSchema,
+} from "./storage/postgres.js";
+export { createStorageRuntime } from "./storage/factory.js";
+export { resolveStorageBackend, STORAGE_BACKENDS } from "./storage/config.js";
+export {
+  ANTHROPIC_MODEL_CATALOG,
+  createAnthropicClient,
+  createAnthropicProviderClient,
+  DEFAULT_ANTHROPIC_MODEL,
+  resolveAnthropicModel,
+} from "./llm/providers/anthropic.js";
+export {
+  createOpenAIClient,
+  createOpenAIProviderClient,
+  DEFAULT_OPENAI_MODEL,
+  OPENAI_MODEL_CATALOG,
+  resolveOpenAIModel,
+} from "./llm/providers/openai.js";
+export {
+  createLlmProviderClient,
+  DEFAULT_LLM_MODEL,
+  DEFAULT_LLM_PROVIDER_ID,
+  listRegisteredProviderIds,
+  resolveLlmConfigFromEnv,
+  resolveLlmModelForProvider,
+  resolveLlmProviderId,
+} from "./llm/registry.js";
+export {
+  countContextTokens,
+  estimateMessageTokens,
+} from "./llm/token-counting.js";
+export {
+  LLM_PROVIDER_IDS,
+  LLM_STOP_REASONS,
+} from "./llm/types.js";
+export { createSharedToolRuntime } from "./runtime/tools.js";
+export {
+  DEFAULT_GATEWAY_LOGGER,
+  DEFAULT_IDEMPOTENCY_STORE,
+  DEFAULT_SESSION_LOCK_MANAGER,
+  GatewayError,
+  InMemoryGatewayIdempotencyStore,
+  InMemorySessionLockManager,
+  buildIdempotencyFingerprint,
+  isGatewayError,
+} from "./gateway/hardening.js";
 export { buildSessionKey } from "./sessions/keys.js";
+export { compactSessionMessages } from "./sessions/compactor.js";
+export { MemoryStore } from "./memory/store.js";
+export { runMemoryIndexingJob } from "./memory/indexer.js";
+export { resolveMemoryEmbeddingProviderFromEnv } from "./memory/embeddings.js";
+export {
+  AUTH_SCOPE_IDS,
+  InMemoryRateLimiter,
+  RequestPolicyError,
+  authorizeRequest,
+  parseRequestGuardConfigFromEnv,
+} from "./security/request-policy.js";
+export { getJihnTracer, recordGatewayTurn } from "./observability/telemetry.js";
+export { createJihnLogger } from "./observability/logger.js";
+export {
+  CHANNEL_AUTH_MODES,
+  ChannelAuthPairingMiddleware,
+  FileChannelPairingStore,
+} from "./channels/auth/pairing.js";
+export {
+  createPluginRuntime,
+  createPluginRuntimeFromLoaded,
+  loadWorkspacePlugins,
+  PluginRuntime,
+  validatePluginModuleForTests,
+} from "./plugins/runtime.js";
+export {
+  PLUGIN_MANIFEST_FILENAME,
+  discoverPluginManifests,
+  loadPluginManifest,
+  parsePluginManifest,
+} from "./plugins/manifest.js";
 export {
   DEFAULT_SESSIONS_DIR,
   resolveSessionsDirectory,
 } from "./sessions/location.js";
 export { SessionStore } from "./sessions/store.js";
+export {
+  ToolPolicyError,
+  createPolicyExecutor,
+  resolveToolPolicy,
+} from "./tools/policy.js";
 export type { RunAgentTurnParams, RunAgentTurnResult } from "./types.js";
+export type {
+  ChannelAuthDecision,
+  ChannelAuthMode,
+  ChannelAuthInboundInput,
+  ChannelAuthPairingMiddlewareOptions,
+  ChannelPairingStore,
+} from "./channels/auth/pairing.js";
+export type {
+  JihnPlugin,
+  JihnPluginFactory,
+  JihnPluginModule,
+  LoadedPlugin,
+  PluginCapability,
+  PluginHookName,
+  PluginLoadIssue,
+  PluginLoadResult,
+  PluginManifest,
+  PluginRuntimeLogger,
+  PluginToolDefinition,
+} from "./plugins/types.js";
+export type {
+  MemorySearchInput,
+  MemorySearchResult,
+  MemoryIndexingJobResult,
+  SaveMemoryInput,
+  SavedMemory,
+} from "./memory/store.js";
+export type { MemoryEmbeddingProvider } from "./memory/embeddings.js";
+export type {
+  ApiPrincipal,
+  ApiTokenPolicy,
+  AuthScopeId,
+  RequestGuardConfig,
+} from "./security/request-policy.js";
+export type {
+  CountContextTokens,
+  SessionCompactionOptions,
+  SessionCompactionResult,
+} from "./sessions/compactor.js";
+export type {
+  McpRegistryOptions,
+  McpRegistrySnapshot,
+  McpServerAuth,
+  McpServerConfig,
+  McpServerInput,
+  McpServerOAuthState,
+  McpServerStateSnapshot,
+  McpToolResolution,
+  McpToolSnapshot,
+} from "./mcp/types.js";
+export type {
+  AnthropicModel,
+} from "./llm/providers/anthropic.js";
+export type { OpenAIModel } from "./llm/providers/openai.js";
+export type {
+  LlmCountTokensParams,
+  LlmCreateTurnParams,
+  LlmCreateTurnResult,
+  LlmProviderClient,
+  LlmProviderId,
+  LlmStopReason,
+  LlmUsage,
+} from "./llm/types.js";
+export type { LlmProviderConfig } from "./llm/registry.js";
+export type {
+  AgentRouteKind,
+  ResolveAgentRouteInput,
+  ResolveAgentRouteResult,
+} from "./routing/router.js";
+export type {
+  BuildSharedToolRuntimeOptions,
+  SharedToolRuntime,
+} from "./runtime/types.js";
 export type {
   HandleMessageParams,
   HandleMessageResolvedRouting,
   HandleMessageResult,
   HandleMessageRoutingInput,
 } from "./gateway/handle-message.js";
+export type {
+  GatewayErrorCode,
+  GatewayIdempotencyStore,
+  GatewayLogEvent,
+  GatewayLogLevel,
+  GatewayLogger,
+  SessionLockManager,
+} from "./gateway/hardening.js";
+export type { StorageBackend } from "./storage/config.js";
+export type { PostgresStorageClient } from "./db/client.js";
+export type {
+  CreateStorageRuntimeOptions,
+  StorageRuntime,
+} from "./storage/factory.js";
 export type { ToolDefinition, JsonSchema } from "./tools.js";
+export type {
+  ToolApprovalHook,
+  ToolPolicy,
+  ToolPolicyDecisionContext,
+  ToolPolicyMode,
+} from "./tools/policy.js";
 export type {
   ContentBlock,
   Message,

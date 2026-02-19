@@ -38,6 +38,17 @@ Optional:
 - `JIHN_TELEGRAM_OUTBOUND_BASE_DELAY_MS=250`
 - `JIHN_TELEGRAM_DEBUG_FILE=.jihn/telegram-debug.json`
 - `JIHN_TELEGRAM_DEBUG_MAX_EVENTS=120`
+- `JIHN_CHANNEL_AUTH_MODE=off|open|pairing` (default `off`)
+- `JIHN_CHANNEL_AUTH_STORE_FILE=.jihn/channel-auth.json`
+- `JIHN_CHANNEL_AUTH_SECRET=...` (recommended)
+- `JIHN_CHANNEL_AUTH_CODE_LENGTH=6`
+- `JIHN_CHANNEL_AUTH_CODE_TTL_MS=300000`
+- `JIHN_CHANNEL_AUTH_MAX_ATTEMPTS=5`
+
+Pairing auth commands:
+
+- `/verify <code>`
+- `/verify new` to rotate challenge
 
 Common shared runtime envs also apply (LLM, MCP, storage, policy, compaction, plugins).
 

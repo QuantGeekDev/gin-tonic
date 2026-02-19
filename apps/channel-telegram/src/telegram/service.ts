@@ -2,7 +2,11 @@ import { Bot, GrammyError, HttpError } from "grammy";
 import type { Context } from "grammy";
 import { webhookCallback } from "grammy";
 import { createServer, type Server } from "node:http";
-import { createJihnLogger } from "@jihn/agent-core";
+import {
+  ChannelAuthPairingMiddleware,
+  FileChannelPairingStore,
+  createJihnLogger,
+} from "@jihn/agent-core";
 import { buildTelegramTurnInput } from "./bridge.js";
 import { buildTelegramReplyOptions, sendTelegramReply } from "./reply.js";
 import type { TelegramInboundMessage } from "./types.js";
@@ -82,6 +86,14 @@ export function createTelegramChannelService(params: {
     baseDelayMs: config.outboundBaseDelayMs,
   });
   let webhookServer: Server | null = null;
+  const authMiddleware = new ChannelAuthPairingMiddleware({
+    mode: config.authMode,
+    store: new FileChannelPairingStore(config.authStoreFilePath),
+    hashSecret: config.authHashSecret ?? config.telegramBotToken,
+    codeLength: config.authCodeLength,
+    codeTtlMs: config.authCodeTtlMs,
+    maxAttempts: config.authMaxAttempts,
+  });
 
   bot.catch((error) => {
     const context = error.ctx;
@@ -123,6 +135,38 @@ export function createTelegramChannelService(params: {
         updateId: inbound.updateId,
         chatId: inbound.chatId,
       });
+      return;
+    }
+
+    const authDecision = await authMiddleware.evaluate({
+      channelId: "telegram",
+      senderId: `chat:${inbound.chatId}:user:${inbound.userId}`,
+      text: inbound.text,
+    });
+    if (authDecision.decision === "deny") {
+      await debugStore.increment("blocked");
+      await debugStore.noteEvent({
+        timestamp: new Date().toISOString(),
+        level: "info",
+        event: `auth_${authDecision.reason}`,
+        updateId: inbound.updateId,
+        chatId: inbound.chatId,
+      });
+      await debugStore.setQueueDepth(outboundQueue.size() + 1);
+      await outboundQueue.enqueue({
+        run: async () => {
+          await sendTelegramReply({
+            api: bot.api,
+            chatId: inbound.chatId,
+            text: authDecision.responseText,
+            options: buildTelegramReplyOptions({
+              message: inbound,
+              replyToIncomingByDefault: true,
+            }),
+          });
+        },
+      });
+      await debugStore.setQueueDepth(outboundQueue.size());
       return;
     }
     await debugStore.increment("received");
