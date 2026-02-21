@@ -23,6 +23,7 @@ import { handleGatewayWsFrame, type GatewayWsConnectionState } from "./ws/handle
 import { GatewayPrometheusMetrics } from "./metrics.js";
 import { RuntimeSettingsService } from "./settings.js";
 import { GatewayLlmRuntime } from "./llm-runtime.js";
+import { GatewayBenchmarkService } from "./benchmark.js";
 
 function optionalPositive(rawValue: string | undefined): number | undefined {
   if (rawValue === undefined) {
@@ -98,10 +99,12 @@ async function main(): Promise<void> {
         }
       : undefined;
 
+  const gatewayAuthTokens = process.env.JIHN_GATEWAY_TOKENS
+    ? process.env.JIHN_GATEWAY_TOKENS.split(",").map((item) => item.trim()).filter(Boolean)
+    : [];
+
   const gateway = new GatewayControlPlaneService({
-    authTokens: process.env.JIHN_GATEWAY_TOKENS
-      ? process.env.JIHN_GATEWAY_TOKENS.split(",").map((item) => item.trim()).filter(Boolean)
-      : [],
+    authTokens: gatewayAuthTokens,
     queue: {
       maxGlobalConcurrency: optionalPositive(process.env.JIHN_GATEWAY_MAX_CONCURRENCY) ?? 4,
       defaultLaneConcurrency: 1,
@@ -113,6 +116,16 @@ async function main(): Promise<void> {
   const rateLimitConfig = parseRateLimitConfig(process.env);
   const rateLimiter = new FixedWindowRateLimiter(rateLimitConfig);
   const gatewayMetrics = new GatewayPrometheusMetrics();
+  const benchmarkClientId = "gateway-benchmark-internal";
+  gateway.connect({
+    clientId: benchmarkClientId,
+    ...(gatewayAuthTokens.length > 0 ? { authToken: gatewayAuthTokens[0] } : {}),
+    metadata: {
+      name: "gateway-benchmark",
+      version: "1.0.0",
+      capabilities: ["benchmark"],
+    },
+  });
 
   gateway.setAgentRunHandler(async (params) => {
     const rawScope = params.metadata?.scope as string | undefined;
@@ -168,6 +181,91 @@ async function main(): Promise<void> {
       sessionKey: result.routing.sessionKey,
       output: JSON.stringify(result),
     };
+  });
+
+  const benchmarkService = new GatewayBenchmarkService({
+    label: process.env.JIHN_GATEWAY_IMPLEMENTATION_LABEL ?? "node-gateway",
+    maxRuns: optionalPositive(process.env.JIHN_BENCHMARK_HISTORY_LIMIT) ?? 200,
+    scenarios: [
+      {
+        id: "health.get",
+        description: "Control-plane health request through queue-aware gateway method routing",
+        async execute() {
+          await gateway.request({
+            clientId: benchmarkClientId,
+            requestId: `bench_health_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            method: "health.get",
+            payload: {},
+          });
+        },
+      },
+      {
+        id: "runtime.meta",
+        description: "Gateway runtime metadata path including MCP tool discovery",
+        async execute() {
+          const runtimeLlm = llmRuntime.resolve(process.env);
+          const mcpTools = await mcpManager.listToolDefinitions();
+          const tools = [...localRuntime.definitions, ...mcpTools.toolDefinitions].map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+          }));
+          void runtimeLlm.providerId;
+          void runtimeLlm.model;
+          void tools.length;
+        },
+      },
+      {
+        id: "settings.snapshot",
+        description: "Runtime settings snapshot read path",
+        async execute() {
+          await settings.snapshot(process.env);
+        },
+      },
+      {
+        id: "agent.run.small",
+        description: "Short agent turn through gateway queue and runtime",
+        defaultPayload: {
+          text: "Reply with one short sentence.",
+          routing: {
+            agentId: "main",
+            scope: "channel-peer",
+            channelId: "benchmark",
+            peerId: "benchmark",
+          },
+        },
+        async execute(rawPayload) {
+          const payload =
+            typeof rawPayload === "object" && rawPayload !== null
+              ? (rawPayload as {
+                  text?: string;
+                  routing?: {
+                    agentId?: string;
+                    scope?: "peer" | "channel-peer" | "channel" | "workspace";
+                    channelId?: string;
+                    peerId?: string;
+                  };
+                })
+              : {};
+          const text = payload.text?.trim() || "Reply with one short sentence.";
+          const routing = payload.routing ?? {};
+          await gateway.request({
+            clientId: benchmarkClientId,
+            requestId: `bench_agent_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            method: "agent.run",
+            payload: {
+              sessionKey: `${routing.agentId ?? "main"}:${routing.scope ?? "channel-peer"}:${routing.channelId ?? "benchmark"}:${routing.peerId ?? "benchmark"}`,
+              text,
+              metadata: {
+                ...(routing.agentId ? { agentId: routing.agentId } : {}),
+                ...(routing.scope ? { scope: routing.scope } : {}),
+                ...(routing.channelId ? { channelId: routing.channelId } : {}),
+                ...(routing.peerId ? { peerId: routing.peerId } : {}),
+              },
+            },
+          });
+        },
+      },
+    ],
   });
 
   const httpServer = createServer((req, res) => {
@@ -493,6 +591,54 @@ async function main(): Promise<void> {
             );
           }
 
+          socket.send(JSON.stringify({ type: "res", id: frame.id, ok: true, result }));
+          recordCustomOutcome("ok");
+          return;
+        }
+
+        if (frame.method === "benchmark.snapshot") {
+          const snapshot = benchmarkService.snapshot();
+          socket.send(JSON.stringify({ type: "res", id: frame.id, ok: true, result: snapshot }));
+          recordCustomOutcome("ok");
+          return;
+        }
+
+        if (frame.method === "benchmark.clear") {
+          const result = benchmarkService.clear();
+          socket.send(JSON.stringify({ type: "res", id: frame.id, ok: true, result }));
+          recordCustomOutcome("ok");
+          return;
+        }
+
+        if (frame.method === "benchmark.run") {
+          const params = (frame.params ?? {}) as {
+            scenario?: string;
+            samples?: number;
+            warmup?: number;
+            concurrency?: number;
+            label?: string;
+            payload?: unknown;
+          };
+          if (typeof params.scenario !== "string" || params.scenario.trim().length === 0) {
+            socket.send(
+              JSON.stringify({
+                type: "error",
+                id: frame.id,
+                code: "INVALID_ARGUMENT",
+                message: "benchmark.run requires a non-empty scenario string",
+              }),
+            );
+            recordCustomOutcome("error");
+            return;
+          }
+          const result = await benchmarkService.run({
+            scenario: params.scenario,
+            ...(params.samples !== undefined ? { samples: params.samples } : {}),
+            ...(params.warmup !== undefined ? { warmup: params.warmup } : {}),
+            ...(params.concurrency !== undefined ? { concurrency: params.concurrency } : {}),
+            ...(params.label !== undefined ? { label: params.label } : {}),
+            ...(params.payload !== undefined ? { payload: params.payload } : {}),
+          });
           socket.send(JSON.stringify({ type: "res", id: frame.id, ok: true, result }));
           recordCustomOutcome("ok");
           return;

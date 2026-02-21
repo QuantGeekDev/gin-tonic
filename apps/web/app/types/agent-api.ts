@@ -160,6 +160,7 @@ export const TelegramDebugEventSchema = z.object({
 export const TelegramDebugDataSchema = z.object({
   generatedAt: z.string(),
   transportMode: z.enum(["polling", "webhook"]),
+  outboundBackend: z.enum(["memory", "postgres"]),
   running: z.boolean(),
   startedAt: z.string().optional(),
   stoppedAt: z.string().optional(),
@@ -173,8 +174,148 @@ export const TelegramDebugDataSchema = z.object({
   }),
   outbound: z.object({
     queueDepth: z.number(),
+    processing: z.number(),
+    retryDepth: z.number(),
+    deadLetterDepth: z.number(),
   }),
   recentEvents: z.array(TelegramDebugEventSchema),
+});
+
+export const PluginManifestSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  version: z.string(),
+  apiVersion: z.number(),
+  entry: z.string(),
+  enabled: z.boolean(),
+  priority: z.number(),
+  capabilities: z.array(z.string()),
+  permissions: z.array(z.string()).optional(),
+  executionMode: z.enum(["in_process", "worker_thread"]).optional(),
+  description: z.string().optional(),
+});
+
+export const PluginStatusSchema = z.object({
+  pluginId: z.string(),
+  state: z.enum(["enabled", "disabled", "open_circuit"]),
+  consecutiveFailures: z.number(),
+  circuitOpenedAt: z.string().optional(),
+  lastError: z.string().optional(),
+  lastUpdatedAt: z.string(),
+});
+
+export const PluginEventSchema = z.object({
+  timestamp: z.string(),
+  name: z.string(),
+  pluginId: z.string(),
+  sessionKey: z.string().optional(),
+  requestId: z.string().optional(),
+  channelId: z.string().optional(),
+  details: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const PluginDebugDataSchema = z.object({
+  plugins: z.array(PluginManifestSchema),
+  statuses: z.array(PluginStatusSchema),
+  events: z.array(PluginEventSchema),
+  health: z.record(
+    z.string(),
+    z.object({
+      healthy: z.boolean(),
+      details: z.string().optional(),
+    }),
+  ),
+});
+
+export const RuntimeSettingDefinitionSchema = z.object({
+  key: z.string(),
+  category: z.string(),
+  description: z.string(),
+  applyMode: z.enum(["hot", "restart_required"]),
+});
+
+export const RuntimeSettingRecordSchema = z.object({
+  key: z.string(),
+  value: z.string(),
+  updatedAt: z.string(),
+  updatedBy: z.string(),
+});
+
+export const SettingsSnapshotDataSchema = z.object({
+  settingsFilePath: z.string(),
+  generatedAt: z.string(),
+  precedenceMode: z.enum(["runtime_over_env", "env_over_runtime"]).optional(),
+  definitions: z.array(RuntimeSettingDefinitionSchema),
+  values: z.array(RuntimeSettingRecordSchema),
+});
+
+export const SettingsUpdateResultSchema = z.object({
+  key: z.string(),
+  value: z.string(),
+  applyMode: z.enum(["hot", "restart_required"]),
+  applied: z.boolean(),
+  updatedAt: z.string(),
+});
+
+export const SettingsActionDataSchema = z.object({
+  update: SettingsUpdateResultSchema.optional(),
+  snapshot: SettingsSnapshotDataSchema.optional(),
+});
+
+export const BenchmarkScenarioSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+});
+
+export const BenchmarkSummarySchema = z.object({
+  totalRequests: z.number(),
+  successfulRequests: z.number(),
+  failedRequests: z.number(),
+  totalDurationMs: z.number(),
+  throughputRps: z.number(),
+  minMs: z.number().nullable(),
+  maxMs: z.number().nullable(),
+  avgMs: z.number().nullable(),
+  p50Ms: z.number().nullable(),
+  p90Ms: z.number().nullable(),
+  p95Ms: z.number().nullable(),
+  p99Ms: z.number().nullable(),
+});
+
+export const BenchmarkErrorSampleSchema = z.object({
+  index: z.number(),
+  message: z.string(),
+});
+
+export const BenchmarkRunResultSchema = z.object({
+  id: z.string(),
+  scenario: z.string(),
+  label: z.string(),
+  startedAt: z.string(),
+  completedAt: z.string(),
+  config: z.object({
+    samples: z.number(),
+    warmup: z.number(),
+    concurrency: z.number(),
+  }),
+  summary: BenchmarkSummarySchema,
+  errors: z.array(BenchmarkErrorSampleSchema),
+});
+
+export const BenchmarkSnapshotDataSchema = z.object({
+  generatedAt: z.string(),
+  scenarios: z.array(BenchmarkScenarioSchema),
+  runs: z.array(BenchmarkRunResultSchema),
+});
+
+export const BenchmarkActionDataSchema = z.object({
+  result: BenchmarkRunResultSchema.optional(),
+  cleared: z
+    .object({
+      cleared: z.number(),
+    })
+    .optional(),
+  snapshot: BenchmarkSnapshotDataSchema.optional(),
 });
 
 export const AgentMetaEnvelopeSchema = createApiSuccessEnvelopeSchema(AgentMetaDataSchema);
@@ -188,6 +329,11 @@ export const MemorySearchEnvelopeSchema = createApiSuccessEnvelopeSchema(MemoryS
 export const MemorySaveEnvelopeSchema = createApiSuccessEnvelopeSchema(MemorySaveDataSchema);
 export const MemoryReindexEnvelopeSchema = createApiSuccessEnvelopeSchema(MemoryReindexDataSchema);
 export const TelegramDebugEnvelopeSchema = createApiSuccessEnvelopeSchema(TelegramDebugDataSchema);
+export const PluginDebugEnvelopeSchema = createApiSuccessEnvelopeSchema(PluginDebugDataSchema);
+export const SettingsSnapshotEnvelopeSchema = createApiSuccessEnvelopeSchema(SettingsSnapshotDataSchema);
+export const SettingsActionEnvelopeSchema = createApiSuccessEnvelopeSchema(SettingsActionDataSchema);
+export const BenchmarkSnapshotEnvelopeSchema = createApiSuccessEnvelopeSchema(BenchmarkSnapshotDataSchema);
+export const BenchmarkActionEnvelopeSchema = createApiSuccessEnvelopeSchema(BenchmarkActionDataSchema);
 
 export type ToolMeta = z.infer<typeof ToolMetaSchema>;
 export type AgentMetaResponse = z.infer<typeof AgentMetaDataSchema>;
@@ -203,5 +349,14 @@ export type McpToolState = z.infer<typeof McpToolStateSchema>;
 export type McpSnapshotResponse = z.infer<typeof McpSnapshotDataSchema>;
 export type TelegramDebugEvent = z.infer<typeof TelegramDebugEventSchema>;
 export type TelegramDebugResponse = z.infer<typeof TelegramDebugDataSchema>;
+export type PluginDebugResponse = z.infer<typeof PluginDebugDataSchema>;
+export type RuntimeSettingDefinition = z.infer<typeof RuntimeSettingDefinitionSchema>;
+export type RuntimeSettingRecord = z.infer<typeof RuntimeSettingRecordSchema>;
+export type SettingsSnapshotResponse = z.infer<typeof SettingsSnapshotDataSchema>;
+export type SettingsActionResponse = z.infer<typeof SettingsActionDataSchema>;
+export type BenchmarkScenario = z.infer<typeof BenchmarkScenarioSchema>;
+export type BenchmarkRunResult = z.infer<typeof BenchmarkRunResultSchema>;
+export type BenchmarkSnapshotResponse = z.infer<typeof BenchmarkSnapshotDataSchema>;
+export type BenchmarkActionResponse = z.infer<typeof BenchmarkActionDataSchema>;
 export type ApiErrorPayload = ApiErrorEnvelope;
 export type WebSessionScope = SessionScope;

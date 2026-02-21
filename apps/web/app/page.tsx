@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { renderMessageContent } from "./lib/agent-client";
 import { useAgentSession } from "./hooks/use-agent-session";
 import { useMemoryDebug } from "./hooks/use-memory-debug";
 import { useMcpDebug } from "./hooks/use-mcp-debug";
+import { usePluginDebug } from "./hooks/use-plugin-debug";
+import { useSettingsDebug } from "./hooks/use-settings-debug";
 import { useTelegramDebug } from "./hooks/use-telegram-debug";
+import { useBenchmarkDebug } from "./hooks/use-benchmark-debug";
 import type { WebSessionScope } from "./types/agent-api";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +32,9 @@ function StatusPill({ label, value }: { label: string; value: string }) {
   );
 }
 
+const TTS_ENABLED_STORAGE_KEY = "jihn.tts.enabled";
+const TTS_AUTOPLAY_STORAGE_KEY = "jihn.tts.autoplay";
+
 function parseErrorWithRequestId(errorText: string): {
   message: string;
   requestId: string | null;
@@ -46,6 +52,11 @@ function parseErrorWithRequestId(errorText: string): {
 export default function Home() {
   const [debugMode, setDebugMode] = useState(true);
   const [copiedRequestId, setCopiedRequestId] = useState<string | null>(null);
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [ttsAutoPlay, setTtsAutoPlay] = useState(false);
+  const [ttsSpeaking, setTtsSpeaking] = useState(false);
+  const [ttsError, setTtsError] = useState<string | null>(null);
+  const lastAutoSpokenRef = useRef<string | null>(null);
 
   const {
     meta,
@@ -119,6 +130,49 @@ export default function Home() {
     telegramRefreshing,
     refreshTelegramDebug,
   } = useTelegramDebug(setError);
+  const {
+    pluginDebug,
+    pluginLoading,
+    pluginRefreshing,
+    refreshPluginDebug,
+  } = usePluginDebug(setError);
+  const {
+    settingsSnapshot,
+    settingsLoading,
+    settingsRefreshing,
+    settingsSaving,
+    selectedKey,
+    draftValue,
+    selectedDefinition,
+    selectedRecord,
+    setSelectedKey,
+    setDraftValue,
+    refreshSettings,
+    saveSetting,
+  } = useSettingsDebug(setError);
+  const {
+    benchmarkSnapshot,
+    benchmarkLoading,
+    benchmarkRefreshing,
+    benchmarkRunning,
+    benchmarkClearing,
+    selectedScenario,
+    samples,
+    warmup,
+    concurrency,
+    label,
+    payloadJson,
+    setSelectedScenario,
+    setSamples,
+    setWarmup,
+    setConcurrency,
+    setLabel,
+    setPayloadJson,
+    refreshBenchmark,
+    runBenchmark,
+    clearBenchmark,
+    latestRun,
+  } = useBenchmarkDebug(setError);
 
   const transcript = useMemo(() => {
     return messages.map((message) => ({
@@ -127,15 +181,110 @@ export default function Home() {
     }));
   }, [messages]);
 
+  const speakText = useCallback(
+    async (text: string): Promise<void> => {
+      if (!ttsEnabled || ttsSpeaking) {
+        return;
+      }
+      const normalized = text.trim();
+      if (normalized.length === 0) {
+        return;
+      }
+
+      setTtsSpeaking(true);
+      setTtsError(null);
+      try {
+        const response = await fetch("/api/tts", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ text: normalized }),
+        });
+        if (!response.ok) {
+          const errorBody = (await response.json().catch(() => null)) as
+            | { error?: { message?: string } }
+            | null;
+          throw new Error(errorBody?.error?.message ?? `TTS request failed (${response.status})`);
+        }
+
+        const audioBlob = await response.blob();
+        const url = URL.createObjectURL(audioBlob);
+        const audio = new Audio(url);
+        await new Promise<void>((resolve, reject) => {
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            resolve();
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error("Audio playback failed."));
+          };
+          void audio.play().catch((error: unknown) => {
+            URL.revokeObjectURL(url);
+            reject(error);
+          });
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setTtsError(message);
+        setError(`TTS failed: ${message}`);
+      } finally {
+        setTtsSpeaking(false);
+      }
+    },
+    [setError, ttsEnabled, ttsSpeaking],
+  );
+
   useEffect(() => {
     const stored = window.localStorage.getItem("jihn.debugMode");
     setDebugMode(stored !== "false");
+    setTtsEnabled(window.localStorage.getItem(TTS_ENABLED_STORAGE_KEY) === "true");
+    setTtsAutoPlay(window.localStorage.getItem(TTS_AUTOPLAY_STORAGE_KEY) === "true");
   }, []);
+
+  useEffect(() => {
+    if (!ttsEnabled || !ttsAutoPlay || loading || ttsSpeaking) {
+      return;
+    }
+    const lastAssistant = [...messages]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    if (!lastAssistant) {
+      return;
+    }
+    const text = renderMessageContent(lastAssistant.content).trim();
+    if (text.length === 0 || lastAutoSpokenRef.current === text) {
+      return;
+    }
+    lastAutoSpokenRef.current = text;
+    void speakText(text);
+  }, [loading, messages, speakText, ttsAutoPlay, ttsEnabled, ttsSpeaking]);
 
   const toggleDebugMode = (): void => {
     setDebugMode((current) => {
       const next = !current;
       window.localStorage.setItem("jihn.debugMode", String(next));
+      return next;
+    });
+  };
+
+  const toggleTtsEnabled = (): void => {
+    setTtsEnabled((current) => {
+      const next = !current;
+      window.localStorage.setItem(TTS_ENABLED_STORAGE_KEY, String(next));
+      if (!next) {
+        setTtsAutoPlay(false);
+        window.localStorage.setItem(TTS_AUTOPLAY_STORAGE_KEY, "false");
+      }
+      return next;
+    });
+  };
+
+  const toggleTtsAutoPlay = (): void => {
+    setTtsAutoPlay((current) => {
+      const next = !current;
+      window.localStorage.setItem(TTS_AUTOPLAY_STORAGE_KEY, String(next));
       return next;
     });
   };
@@ -228,6 +377,19 @@ export default function Home() {
                         <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                           {line.role}
                         </p>
+                        {!isUser && ttsEnabled ? (
+                          <div className="mb-2 flex justify-end">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 px-2 text-[10px]"
+                              onClick={() => void speakText(line.text)}
+                              disabled={ttsSpeaking || loading}
+                            >
+                              {ttsSpeaking ? "Speaking..." : "Speak"}
+                            </Button>
+                          </div>
+                        ) : null}
                         <p className="whitespace-pre-wrap">{line.text}</p>
                       </div>
                     );
@@ -286,6 +448,31 @@ export default function Home() {
                     Peer ID
                     <Input value={peerId} readOnly className="bg-muted" />
                   </label>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Voice Output</CardTitle>
+                  <CardDescription>Dashboard text-to-speech mode</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2 text-xs text-muted-foreground">
+                  <div className="flex gap-2">
+                    <Button variant={ttsEnabled ? "default" : "outline"} size="sm" onClick={toggleTtsEnabled}>
+                      {ttsEnabled ? "TTS On" : "TTS Off"}
+                    </Button>
+                    <Button
+                      variant={ttsAutoPlay ? "default" : "outline"}
+                      size="sm"
+                      onClick={toggleTtsAutoPlay}
+                      disabled={!ttsEnabled}
+                    >
+                      Auto-play {ttsAutoPlay ? "On" : "Off"}
+                    </Button>
+                  </div>
+                  <p>provider route: /api/tts</p>
+                  <p>state: {ttsSpeaking ? "speaking" : "idle"}</p>
+                  {ttsError ? <p className="text-destructive">error: {ttsError}</p> : null}
                 </CardContent>
               </Card>
 
@@ -367,6 +554,202 @@ export default function Home() {
                   </Card>
 
                   <Card>
+                    <CardHeader className="flex-row items-center justify-between space-y-0">
+                      <div>
+                        <CardTitle>Runtime Settings</CardTitle>
+                        <CardDescription>Allowlisted gateway settings persisted via control plane</CardDescription>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={settingsRefreshing}
+                        onClick={() => void refreshSettings()}
+                      >
+                        {settingsRefreshing ? "Refreshing..." : "Refresh"}
+                      </Button>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-xs text-muted-foreground">
+                      {settingsLoading ? <p>Loading runtime settings...</p> : null}
+                      {settingsSnapshot ? (
+                        <>
+                          <p>settings file: {settingsSnapshot.settingsFilePath}</p>
+                          <p>snapshot: {settingsSnapshot.generatedAt}</p>
+                          <p>
+                            precedence: {settingsSnapshot.precedenceMode ?? "runtime_over_env"}
+                          </p>
+                          <label className="block">
+                            <span className="mb-1 block">Key</span>
+                            <select
+                              className="h-10 w-full rounded-md border border-input bg-background px-2"
+                              value={selectedKey}
+                              onChange={(event) => setSelectedKey(event.target.value)}
+                            >
+                              {settingsSnapshot.definitions.map((definition) => (
+                                <option key={definition.key} value={definition.key}>
+                                  {definition.key}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block">Value</span>
+                            <Input
+                              value={draftValue}
+                              onChange={(event) => setDraftValue(event.target.value)}
+                              placeholder="new value"
+                            />
+                          </label>
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={() => void saveSetting()} disabled={settingsSaving}>
+                              {settingsSaving ? "Saving..." : "Save Setting"}
+                            </Button>
+                          </div>
+                          {selectedDefinition ? (
+                            <Card className="bg-muted/40">
+                              <CardContent className="p-3">
+                                <p className="font-mono">{selectedDefinition.key}</p>
+                                <p>category: {selectedDefinition.category}</p>
+                                <p>apply mode: {selectedDefinition.applyMode}</p>
+                                <p>{selectedDefinition.description}</p>
+                                <p>
+                                  current:{" "}
+                                  <span className="font-mono">
+                                    {selectedRecord?.value ?? "(unset)"}
+                                  </span>
+                                </p>
+                                <p>
+                                  source:{" "}
+                                  {selectedRecord?.updatedBy === "env"
+                                    ? "environment"
+                                    : selectedRecord?.updatedBy ?? "(none)"}
+                                </p>
+                              </CardContent>
+                            </Card>
+                          ) : null}
+                        </>
+                      ) : (
+                        <p>No settings snapshot available.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="flex-row items-center justify-between space-y-0">
+                      <div>
+                        <CardTitle>Benchmark Lab</CardTitle>
+                        <CardDescription>Gateway latency and throughput benchmarking</CardDescription>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={benchmarkRefreshing}
+                        onClick={() => void refreshBenchmark()}
+                      >
+                        {benchmarkRefreshing ? "Refreshing..." : "Refresh"}
+                      </Button>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-xs text-muted-foreground">
+                      {benchmarkLoading ? <p>Loading benchmark snapshot...</p> : null}
+                      {benchmarkSnapshot ? (
+                        <>
+                          <p>snapshot: {benchmarkSnapshot.generatedAt}</p>
+                          <p>stored runs: {benchmarkSnapshot.runs.length}</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <label className="block">
+                              <span className="mb-1 block">Scenario</span>
+                              <select
+                                className="h-10 w-full rounded-md border border-input bg-background px-2"
+                                value={selectedScenario}
+                                onChange={(event) => setSelectedScenario(event.target.value)}
+                              >
+                                {benchmarkSnapshot.scenarios.map((scenario) => (
+                                  <option key={scenario.id} value={scenario.id}>
+                                    {scenario.id}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="block">
+                              <span className="mb-1 block">Label</span>
+                              <Input
+                                placeholder="node-gateway"
+                                value={label}
+                                onChange={(event) => setLabel(event.target.value)}
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="mb-1 block">Samples</span>
+                              <Input value={samples} onChange={(event) => setSamples(event.target.value)} />
+                            </label>
+                            <label className="block">
+                              <span className="mb-1 block">Warmup</span>
+                              <Input value={warmup} onChange={(event) => setWarmup(event.target.value)} />
+                            </label>
+                            <label className="block">
+                              <span className="mb-1 block">Concurrency</span>
+                              <Input
+                                value={concurrency}
+                                onChange={(event) => setConcurrency(event.target.value)}
+                              />
+                            </label>
+                          </div>
+                          <label className="block">
+                            <span className="mb-1 block">Payload JSON (optional)</span>
+                            <Textarea
+                              className="h-20 resize-none"
+                              placeholder='{"text":"Reply with one word OK"}'
+                              value={payloadJson}
+                              onChange={(event) => setPayloadJson(event.target.value)}
+                            />
+                          </label>
+                          <div className="flex gap-2">
+                            <Button size="sm" disabled={benchmarkRunning} onClick={() => void runBenchmark()}>
+                              {benchmarkRunning ? "Running..." : "Run Benchmark"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={benchmarkClearing}
+                              onClick={() => void clearBenchmark()}
+                            >
+                              {benchmarkClearing ? "Clearing..." : "Clear Results"}
+                            </Button>
+                          </div>
+                          {latestRun ? (
+                            <Card className="bg-muted/40">
+                              <CardContent className="p-3">
+                                <p className="font-mono">
+                                  {latestRun.scenario} [{latestRun.label}]
+                                </p>
+                                <p>
+                                  ok/fail: {latestRun.summary.successfulRequests}/
+                                  {latestRun.summary.failedRequests} | total: {latestRun.summary.totalRequests}
+                                </p>
+                                <p>
+                                  duration: {latestRun.summary.totalDurationMs.toFixed(2)}ms | throughput:{" "}
+                                  {latestRun.summary.throughputRps.toFixed(2)} rps
+                                </p>
+                                <p>
+                                  p50/p95/p99: {latestRun.summary.p50Ms?.toFixed(2) ?? "n/a"} /{" "}
+                                  {latestRun.summary.p95Ms?.toFixed(2) ?? "n/a"} /{" "}
+                                  {latestRun.summary.p99Ms?.toFixed(2) ?? "n/a"} ms
+                                </p>
+                                {latestRun.errors.length > 0 ? (
+                                  <p>errors captured: {latestRun.errors.length}</p>
+                                ) : null}
+                              </CardContent>
+                            </Card>
+                          ) : (
+                            <p>No benchmark run yet.</p>
+                          )}
+                        </>
+                      ) : (
+                        <p>No benchmark snapshot available.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
                     <CardHeader>
                       <CardTitle>Tool Trace</CardTitle>
                       <CardDescription>Recent tool calls and outputs</CardDescription>
@@ -383,6 +766,81 @@ export default function Home() {
                           </ul>
                         )}
                       </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="flex-row items-center justify-between space-y-0">
+                      <div>
+                        <CardTitle>Plugin Runtime</CardTitle>
+                        <CardDescription>Loaded plugins, lifecycle health, and events</CardDescription>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={pluginRefreshing}
+                        onClick={() => void refreshPluginDebug()}
+                      >
+                        {pluginRefreshing ? "Refreshing..." : "Refresh"}
+                      </Button>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-xs text-muted-foreground">
+                      {pluginLoading ? <p>Loading plugin runtime snapshot...</p> : null}
+                      {pluginDebug ? (
+                        <>
+                          <p>plugins: {pluginDebug.plugins.length}</p>
+                          <p>events captured: {pluginDebug.events.length}</p>
+                          <div className="space-y-2">
+                            {pluginDebug.plugins.map((plugin) => {
+                              const status = pluginDebug.statuses.find(
+                                (item) => item.pluginId === plugin.id,
+                              );
+                              const health = pluginDebug.health[plugin.id];
+                              return (
+                                <Card key={plugin.id} className="bg-muted/40">
+                                  <CardContent className="p-3">
+                                    <p className="font-mono">
+                                      {plugin.id} v{plugin.version}
+                                    </p>
+                                    <p>
+                                      state: {status?.state ?? "unknown"} | healthy:{" "}
+                                      {String(health?.healthy ?? false)}
+                                    </p>
+                                    <p>
+                                      capabilities: {plugin.capabilities.join(", ") || "(none)"}
+                                    </p>
+                                    <p>
+                                      permissions: {plugin.permissions?.join(", ") || "(none)"}
+                                    </p>
+                                    {status?.lastError ? <p>error: {status.lastError}</p> : null}
+                                  </CardContent>
+                                </Card>
+                              );
+                            })}
+                          </div>
+                          <div className="max-h-40 overflow-y-auto rounded-md border bg-muted/30 p-2">
+                            {pluginDebug.events.length === 0 ? (
+                              <p>No plugin events recorded.</p>
+                            ) : (
+                              <ul className="space-y-1">
+                                {pluginDebug.events
+                                  .slice(-40)
+                                  .reverse()
+                                  .map((event, index) => (
+                                    <li
+                                      key={`${event.timestamp}-${event.pluginId}-${index}`}
+                                      className="break-all"
+                                    >
+                                      [{event.name}] {event.pluginId} @ {event.timestamp}
+                                    </li>
+                                  ))}
+                              </ul>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <p>No plugin snapshot available.</p>
+                      )}
                     </CardContent>
                   </Card>
 
@@ -415,7 +873,9 @@ export default function Home() {
                           </p>
                           <p>
                             blocked: {telegramDebug.stats.blocked} | retries:{" "}
-                            {telegramDebug.stats.retries} | queue: {telegramDebug.outbound.queueDepth}
+                            {telegramDebug.stats.retries} | queue: {telegramDebug.outbound.queueDepth} | processing:{" "}
+                            {telegramDebug.outbound.processing} | retry: {telegramDebug.outbound.retryDepth} | dead:{" "}
+                            {telegramDebug.outbound.deadLetterDepth}
                           </p>
                           <p>snapshot: {telegramDebug.generatedAt}</p>
                           <div className="max-h-36 overflow-y-auto rounded-md border bg-muted/30 p-2">

@@ -24,7 +24,7 @@ _${commandName}_complete() {
   cword=\${COMP_CWORD}
 
   if [[ $cword -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "settings mcp plugin completion" -- "$cur") )
+    COMPREPLY=( $(compgen -W "settings benchmark mcp plugin completion" -- "$cur") )
     return 0
   fi
 
@@ -46,6 +46,14 @@ _${commandName}_complete() {
         return 0
       fi
       COMPREPLY=( $(compgen -W "--key --value --alias --id" -- "$cur") )
+      return 0
+      ;;
+    benchmark)
+      if [[ $cword -eq 2 ]]; then
+        COMPREPLY=( $(compgen -W "list scenarios run clear help" -- "$cur") )
+        return 0
+      fi
+      COMPREPLY=( $(compgen -W "--scenario --samples --warmup --concurrency --label --payload-json" -- "$cur") )
       return 0
       ;;
     mcp)
@@ -85,6 +93,7 @@ _${commandName}() {
   local -a commands
   commands=(
     'settings:Manage runtime settings'
+    'benchmark:Run gateway benchmarks'
     'mcp:Manage MCP servers'
     'plugin:Manage workspace plugins'
     'completion:Print shell completion script'
@@ -96,6 +105,16 @@ _${commandName}() {
   fi
 
   case "$words[2]" in
+    benchmark)
+      _arguments \
+        '2:subcommand:(list scenarios run clear help)' \
+        '--scenario=[benchmark scenario id]:scenario:' \
+        '--samples=[sample count]:samples:' \
+        '--warmup=[warmup count]:warmup:' \
+        '--concurrency=[parallel workers]:concurrency:' \
+        '--label=[result label]:label:' \
+        '--payload-json=[scenario payload json]:payload_json:'
+      ;;
     settings)
       _arguments \
         '2:subcommand:(list get set model keys help)' \
@@ -125,8 +144,9 @@ function fishScript(commandName: string): string {
     ${commandName} settings keys 2>/dev/null
 end
 
-complete -c ${commandName} -f -n '__fish_use_subcommand' -a 'settings mcp plugin completion'
+complete -c ${commandName} -f -n '__fish_use_subcommand' -a 'settings benchmark mcp plugin completion'
 complete -c ${commandName} -f -n '__fish_seen_subcommand_from settings' -a 'list get set model keys help'
+complete -c ${commandName} -f -n '__fish_seen_subcommand_from benchmark' -a 'list scenarios run clear help'
 complete -c ${commandName} -f -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'
 complete -c ${commandName} -f -n '__fish_seen_subcommand_from mcp' -a 'list tools add remove oauth help'
 complete -c ${commandName} -f -n '__fish_seen_subcommand_from plugin' -a 'list validate inspect enable disable create help'
@@ -136,6 +156,12 @@ complete -c ${commandName} -f -n '__fish_seen_subcommand_from settings' -l key -
 complete -c ${commandName} -f -n '__fish_seen_subcommand_from settings' -l value -d 'Setting value'
 complete -c ${commandName} -f -n '__fish_seen_subcommand_from settings' -l alias -d 'Model alias'
 complete -c ${commandName} -f -n '__fish_seen_subcommand_from settings' -l id -d 'Model id'
+complete -c ${commandName} -f -n '__fish_seen_subcommand_from benchmark' -l scenario -d 'Scenario id'
+complete -c ${commandName} -f -n '__fish_seen_subcommand_from benchmark' -l samples -d 'Sample count'
+complete -c ${commandName} -f -n '__fish_seen_subcommand_from benchmark' -l warmup -d 'Warmup count'
+complete -c ${commandName} -f -n '__fish_seen_subcommand_from benchmark' -l concurrency -d 'Parallel workers'
+complete -c ${commandName} -f -n '__fish_seen_subcommand_from benchmark' -l label -d 'Result label'
+complete -c ${commandName} -f -n '__fish_seen_subcommand_from benchmark' -l payload-json -d 'Scenario payload JSON'
 `;
 }
 
