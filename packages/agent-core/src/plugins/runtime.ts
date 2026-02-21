@@ -21,6 +21,7 @@ import type {
   PluginEventSink,
   PluginHookErrorMode,
   PluginHookName,
+  PluginIsolationPolicy,
   PluginLoadIssue,
   PluginLoadResult,
   PluginManifest,
@@ -34,6 +35,10 @@ import type {
   PluginTurnResult,
 } from "./types.js";
 import { PLUGIN_CAPABILITIES } from "./types.js";
+import {
+  resolvePluginExecutionMode,
+  DEFAULT_ISOLATION_POLICY,
+} from "./isolation/policy.js";
 import type { ToolDefinition } from "../tools.js";
 
 const DEFAULT_HOOK_TIMEOUT_MS = 2_000;
@@ -73,6 +78,7 @@ export interface LoadWorkspacePluginsOptions {
   logger?: PluginRuntimeLogger;
   hostVersion?: string;
   supportedApiVersions?: number[];
+  isolationPolicy?: PluginIsolationPolicy;
 }
 
 interface PluginDefinitionShape {
@@ -941,6 +947,7 @@ export async function loadWorkspacePlugins(
   const hostVersion = options.hostVersion ?? DEFAULT_PLUGIN_HOST_VERSION;
   const supportedApiVersions =
     options.supportedApiVersions ?? [...DEFAULT_SUPPORTED_PLUGIN_API_VERSIONS];
+  const isolationPolicy = options.isolationPolicy ?? DEFAULT_ISOLATION_POLICY;
   const manifests = await discoverPluginManifests(options);
   const issues: PluginLoadIssue[] = [];
   const plugins: LoadedPlugin[] = [];
@@ -974,7 +981,37 @@ export async function loadWorkspacePlugins(
     try {
       const entryPath = resolve(item.rootDir, item.manifest.entry);
 
-      if (item.manifest.executionMode === "worker_thread") {
+      // Resolve effective execution mode via policy
+      const modeResolution = resolvePluginExecutionMode(item.manifest, isolationPolicy);
+      logger.debug?.("plugin.policy.resolved", {
+        pluginId,
+        effectiveMode: modeResolution.effectiveMode,
+        requestedMode: modeResolution.requestedMode,
+        reasons: modeResolution.reasons,
+        denied: modeResolution.denied,
+      });
+
+      if (modeResolution.denied) {
+        issues.push({
+          pluginId,
+          level: "error",
+          message: `policy denied: ${modeResolution.reasons.join("; ")}`,
+        });
+        continue;
+      }
+
+      const effectiveMode = modeResolution.effectiveMode;
+
+      if (effectiveMode === "external_process" || effectiveMode === "container") {
+        issues.push({
+          pluginId,
+          level: "error",
+          message: `execution mode "${effectiveMode}" is not yet supported (requires M2/M3)`,
+        });
+        continue;
+      }
+
+      if (effectiveMode === "worker_thread") {
         const host = new PluginWorkerHost(item.manifest);
         await host.start(entryPath);
         const proxyPlugin = host.toPluginProxy();

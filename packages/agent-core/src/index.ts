@@ -141,6 +141,10 @@ export { createPluginContext } from "./plugins/context.js";
 export type { PluginContextServices } from "./plugins/context.js";
 export { PluginWorkerHost } from "./plugins/isolation/worker-host.js";
 export {
+  resolvePluginExecutionMode,
+  DEFAULT_ISOLATION_POLICY,
+} from "./plugins/isolation/policy.js";
+export {
   PluginPermissionError,
   hasPluginPermission,
   requirePluginPermission,
@@ -228,6 +232,10 @@ export type {
   PluginStatusState,
   PluginStatusStore,
   PluginToolDefinition,
+  PluginTrustTier,
+  PluginIsolationPolicy,
+  PluginModeResolution,
+  PluginExecutionMode,
 } from "./plugins/types.js";
 export type {
   MemorySearchInput,

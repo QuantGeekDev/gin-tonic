@@ -22,7 +22,65 @@ export const PLUGIN_HOOK_NAMES = [
 export type PluginHookName = (typeof PLUGIN_HOOK_NAMES)[number];
 
 export type PluginHookErrorMode = "continue" | "fail";
-export type PluginExecutionMode = "in_process" | "worker_thread";
+export type PluginExecutionMode = "in_process" | "worker_thread" | "external_process" | "container";
+
+export const PLUGIN_EXECUTION_MODES = [
+  "in_process",
+  "worker_thread",
+  "external_process",
+  "container",
+] as const;
+
+/**
+ * Isolation strength ordering: higher index = stronger isolation.
+ * Used by policy resolver to enforce minimum isolation levels.
+ */
+export const EXECUTION_MODE_STRENGTH: Record<PluginExecutionMode, number> = {
+  in_process: 0,
+  worker_thread: 1,
+  external_process: 2,
+  container: 3,
+};
+
+export const PLUGIN_TRUST_TIERS = [
+  "first_party",
+  "verified_partner",
+  "community",
+] as const;
+
+export type PluginTrustTier = (typeof PLUGIN_TRUST_TIERS)[number];
+
+/**
+ * Permissions that carry elevated risk and may require stricter isolation.
+ */
+export const RISKY_PLUGIN_PERMISSIONS: readonly PluginPermission[] = [
+  "filesystem.write",
+  "network.http",
+];
+
+/**
+ * Operator-level isolation policy configuration.
+ */
+export interface PluginIsolationPolicy {
+  /** Default execution mode when manifest does not specify one. */
+  defaultMode: PluginExecutionMode;
+  /** Plugin IDs explicitly allowed to run in_process. */
+  inProcessAllowlist: string[];
+  /** Minimum execution mode for plugins with risky permissions. */
+  riskyPermissionMinimumMode: PluginExecutionMode;
+  /** Per-trust-tier default execution modes. */
+  trustTierDefaults: Partial<Record<PluginTrustTier, PluginExecutionMode>>;
+}
+
+/**
+ * Result of resolving the effective execution mode for a plugin.
+ */
+export interface PluginModeResolution {
+  effectiveMode: PluginExecutionMode;
+  requestedMode: PluginExecutionMode | undefined;
+  reasons: string[];
+  denied: boolean;
+}
 
 export const PLUGIN_PERMISSIONS = [
   "memory.read",
@@ -69,6 +127,7 @@ export interface PluginManifest {
   hookPolicies?: Partial<Record<PluginHookName, PluginHookPolicy>> | undefined;
   dependencies?: string[] | undefined;
   description?: string | undefined;
+  trustTier?: PluginTrustTier | undefined;
 }
 
 export interface PluginPromptComposeContext {
@@ -214,6 +273,8 @@ export const PLUGIN_EVENT_NAMES = [
   "plugin.hook.timed_out",
   "plugin.tool.executed",
   "plugin.permission.denied",
+  "plugin.policy.resolved",
+  "plugin.policy.denied",
 ] as const;
 
 export type PluginEventName = (typeof PLUGIN_EVENT_NAMES)[number];

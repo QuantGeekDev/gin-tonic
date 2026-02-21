@@ -3,8 +3,10 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 import {
   PLUGIN_CAPABILITIES,
+  PLUGIN_EXECUTION_MODES,
   PLUGIN_HOOK_NAMES,
   PLUGIN_PERMISSIONS,
+  PLUGIN_TRUST_TIERS,
   type PluginManifest,
 } from "./types.js";
 
@@ -29,7 +31,7 @@ const PluginManifestSchema = z
     priority: z.number().int().min(-1000).max(1000).default(0),
     capabilities: z.array(z.enum(PLUGIN_CAPABILITIES)).min(1),
     permissions: z.array(z.enum(PLUGIN_PERMISSIONS)).optional(),
-    executionMode: z.enum(["in_process", "worker_thread"]).default("in_process"),
+    executionMode: z.enum(PLUGIN_EXECUTION_MODES).optional(),
     compatibility: z
       .object({
         minHostVersion: z.string().trim().min(1).max(40).optional(),
@@ -47,6 +49,7 @@ const PluginManifestSchema = z
     hookPolicies: z.partialRecord(z.enum(PLUGIN_HOOK_NAMES), HookPolicySchema).optional(),
     dependencies: z.array(z.string().trim().min(1).max(100)).optional(),
     description: z.string().trim().min(1).max(600).optional(),
+    trustTier: z.enum(PLUGIN_TRUST_TIERS).optional(),
   })
   .strict();
 
