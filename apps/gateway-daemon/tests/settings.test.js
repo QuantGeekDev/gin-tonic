@@ -97,4 +97,26 @@ describe("RuntimeSettingsService", () => {
     expect(profile.applyMode).toBe("hot");
     expect(env.JIHN_ANTHROPIC_MODEL_HAIKU).toBe("claude-3-5-haiku-latest");
   });
+
+  it("respects env_over_runtime precedence", async () => {
+    const { env } = await tempEnv();
+    env.JIHN_SETTINGS_PRECEDENCE = "env_over_runtime";
+    env.JIHN_GATEWAY_RATE_LIMIT_REQUESTS = "120";
+    const service = new RuntimeSettingsService(env);
+
+    await expect(
+      service.update({
+        key: "JIHN_GATEWAY_RATE_LIMIT_REQUESTS",
+        value: "200",
+        updatedBy: "test-client",
+        currentEnv: env,
+      }),
+    ).rejects.toThrow("locked by environment precedence");
+
+    const snapshot = await service.snapshot(env);
+    const record = snapshot.values.find((item) => item.key === "JIHN_GATEWAY_RATE_LIMIT_REQUESTS");
+    expect(snapshot.precedenceMode).toBe("env_over_runtime");
+    expect(record?.updatedBy).toBe("env");
+    expect(record?.value).toBe("120");
+  });
 });

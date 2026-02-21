@@ -19,6 +19,7 @@ export interface RuntimeSettingRecord {
 export interface RuntimeSettingsSnapshot {
   settingsFilePath: string;
   generatedAt: string;
+  precedenceMode: "runtime_over_env" | "env_over_runtime";
   definitions: Array<{
     key: string;
     category: string;
@@ -254,9 +255,12 @@ function sortRecords(records: RuntimeSettingRecord[]): RuntimeSettingRecord[] {
 
 export class RuntimeSettingsService {
   private readonly settingsFilePath: string;
+  private readonly precedenceMode: "runtime_over_env" | "env_over_runtime";
 
   public constructor(env: NodeJS.ProcessEnv = process.env) {
     this.settingsFilePath = settingsPathFromEnv(env);
+    const rawMode = env.JIHN_SETTINGS_PRECEDENCE?.trim().toLowerCase();
+    this.precedenceMode = rawMode === "env_over_runtime" ? "env_over_runtime" : "runtime_over_env";
   }
 
   public async snapshot(currentEnv: NodeJS.ProcessEnv = process.env): Promise<RuntimeSettingsSnapshot> {
@@ -265,24 +269,31 @@ export class RuntimeSettingsService {
     const values = new Map<string, RuntimeSettingRecord>();
     for (const definition of DEFINITIONS) {
       const fromFile = state.values[definition.key];
-      if (fromFile !== undefined) {
+      const fromEnv = currentEnv[definition.key];
+      const hasEnvValue = typeof fromEnv === "string" && fromEnv.trim().length > 0;
+
+      if (this.precedenceMode === "runtime_over_env" && fromFile !== undefined) {
         values.set(definition.key, fromFile);
         continue;
       }
-      const fromEnv = currentEnv[definition.key];
-      if (typeof fromEnv === "string" && fromEnv.trim().length > 0) {
+      if (hasEnvValue) {
         values.set(definition.key, {
           key: definition.key,
           value: fromEnv.trim(),
           updatedAt: new Date(0).toISOString(),
           updatedBy: "env",
         });
+        continue;
+      }
+      if (fromFile !== undefined) {
+        values.set(definition.key, fromFile);
       }
     }
 
     return {
       settingsFilePath: this.settingsFilePath,
       generatedAt: new Date().toISOString(),
+      precedenceMode: this.precedenceMode,
       definitions: DEFINITIONS.map((definition) => ({
         key: definition.key,
         category: definition.category,
@@ -314,6 +325,12 @@ export class RuntimeSettingsService {
     const normalizedValue = definition.validate(params.value);
     const nowIso = new Date().toISOString();
     const state = await this.readState();
+    if (this.precedenceMode === "env_over_runtime") {
+      const envValue = params.currentEnv?.[key]?.trim();
+      if (envValue && envValue.length > 0) {
+        throw new Error(`setting '${key}' is locked by environment precedence`);
+      }
+    }
     state.values[key] = {
       key,
       value: normalizedValue,
@@ -338,7 +355,8 @@ export class RuntimeSettingsService {
     const state = await this.readState();
     for (const definition of DEFINITIONS) {
       const existing = state.values[definition.key];
-      if (existing) {
+      const envValue = targetEnv[definition.key]?.trim();
+      if (existing && !(this.precedenceMode === "env_over_runtime" && envValue && envValue.length > 0)) {
         targetEnv[definition.key] = existing.value;
       }
     }
