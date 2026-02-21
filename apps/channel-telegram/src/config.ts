@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { ChannelAuthMode, SessionScope } from "@jihn/agent-core";
+import type { ChannelAuthMode, ChannelTtsPolicy, SessionScope } from "@jihn/agent-core";
+import { resolveChannelTtsPolicyFromEnv } from "@jihn/agent-core";
 
 const SessionScopeSchema = z.enum(["channel-peer", "peer", "global"] as const);
 const TransportModeSchema = z.enum(["polling", "webhook"] as const);
@@ -71,6 +72,7 @@ export interface TelegramChannelConfig {
   replyToIncomingByDefault: boolean;
   typingIndicatorEnabled: boolean;
   typingIntervalMs: number;
+  ttsPolicy: ChannelTtsPolicy;
   outboundMaxAttempts: number;
   outboundBaseDelayMs: number;
   outboundBackend: "memory" | "postgres";
@@ -147,6 +149,11 @@ export function loadTelegramChannelConfig(
     );
   }
 
+  const ttsPolicy = resolveChannelTtsPolicyFromEnv({
+    channelId: "telegram",
+    env,
+  });
+
   return {
     telegramBotToken: parsed.telegramBotToken,
     agentId: parsed.agentId,
@@ -162,6 +169,7 @@ export function loadTelegramChannelConfig(
     replyToIncomingByDefault: parsed.replyToIncomingByDefault,
     typingIndicatorEnabled: parsed.typingIndicatorEnabled,
     typingIntervalMs: parsed.typingIntervalMs,
+    ttsPolicy,
     outboundMaxAttempts: parsed.outboundMaxAttempts,
     outboundBaseDelayMs: parsed.outboundBaseDelayMs,
     outboundBackend: parsed.outboundBackend,

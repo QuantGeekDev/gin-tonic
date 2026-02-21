@@ -29,6 +29,11 @@ Optional:
 - `JIHN_TELEGRAM_REPLY_TO_INCOMING=true`
 - `JIHN_TELEGRAM_TYPING_ENABLED=true|false` (default `true`)
 - `JIHN_TELEGRAM_TYPING_INTERVAL_MS=4000` (1,000-10,000)
+- `JIHN_TELEGRAM_TTS_MODE=off|text_and_voice|voice_only` (default `off`)
+- `JIHN_TELEGRAM_TTS_VOICE_ID=...` (optional channel override)
+- `JIHN_TELEGRAM_TTS_MODEL_ID=...` (optional channel override)
+- `JIHN_TELEGRAM_TTS_OUTPUT_FORMAT=opus_48000_64` (default)
+- `JIHN_TELEGRAM_TTS_MAX_CHARS=800` (100-6,000)
 - `JIHN_TELEGRAM_ALLOWED_CHAT_IDS=123456,-987654`
 - `JIHN_TELEGRAM_TRANSPORT=polling|webhook` (default `polling`)
 - `JIHN_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL=https://bot.example.com` (required for webhook)
@@ -58,6 +63,17 @@ Pairing auth commands:
 - `/verify new` to rotate challenge
 
 Common shared runtime envs also apply (LLM, MCP, storage, policy, compaction, plugins).
+For voice replies, shared TTS envs are also required:
+
+- `JIHN_TTS_PROVIDER=elevenlabs`
+- `ELEVENLABS_API_KEY=...`
+- `JIHN_TTS_VOICE_ID=...` (or Telegram override above)
+
+Shared defaults can also be set once and reused by all channels:
+
+- `JIHN_TTS_MODE=off|text_and_voice|voice_only`
+- `JIHN_TTS_MAX_CHARS=1200`
+- `JIHN_TTS_OUTPUT_FORMAT=...`
 
 If `JIHN_TELEGRAM_OUTBOX_BACKEND=postgres`, set `DATABASE_URL` (or `JIHN_DATABASE_URL`) so
 outbound delivery is durable across adapter restarts.

@@ -5,10 +5,11 @@ import { createServer, type Server } from "node:http";
 import {
   ChannelAuthPairingMiddleware,
   FileChannelPairingStore,
+  createTtsProviderFromEnv,
   createJihnLogger,
 } from "@jihn/agent-core";
 import { buildTelegramTurnInput } from "./bridge.js";
-import { buildTelegramReplyOptions, sendTelegramReply } from "./reply.js";
+import { buildTelegramReplyOptions, sendTelegramReply, sendTelegramVoiceReply } from "./reply.js";
 import type { TelegramInboundMessage } from "./types.js";
 import type { TelegramChannelConfig } from "../config.js";
 import type { TelegramAgentRuntime } from "../runtime.js";
@@ -89,6 +90,7 @@ export function createTelegramChannelService(params: {
     ...process.env,
     JIHN_TELEGRAM_OUTBOX_BACKEND: config.outboundBackend,
   });
+  const ttsProvider = createTtsProviderFromEnv(process.env);
   const metrics = new TelegramPrometheusMetrics();
   let metricsServer: Server | null = null;
   const updateMetricsSnapshot = async (): Promise<void> => {
@@ -113,6 +115,33 @@ export function createTelegramChannelService(params: {
     baseDelayMs: config.outboundBaseDelayMs,
     store: outboxStore,
     send: async (payload) => {
+      const shouldSendVoice = payload.tts !== undefined;
+      const textForTts = payload.text.trim();
+      if (
+        shouldSendVoice &&
+        ttsProvider !== null &&
+        textForTts.length > 0 &&
+        textForTts.length <= config.ttsPolicy.maxChars
+      ) {
+        const audio = await ttsProvider.synthesize({
+          text: textForTts,
+          ...(payload.tts?.voiceId !== undefined ? { voiceId: payload.tts.voiceId } : {}),
+          ...(payload.tts?.modelId !== undefined ? { modelId: payload.tts.modelId } : {}),
+          ...(payload.tts?.outputFormat !== undefined
+            ? { outputFormat: payload.tts.outputFormat }
+            : {}),
+        });
+        await sendTelegramVoiceReply({
+          api: bot.api,
+          chatId: payload.chatId,
+          audio: audio.audio,
+          contentType: audio.contentType,
+          options: payload.options,
+        });
+        if (payload.tts?.mode === "voice_only") {
+          return;
+        }
+      }
       await sendTelegramReply({
         api: bot.api,
         chatId: payload.chatId,
@@ -237,6 +266,20 @@ export function createTelegramChannelService(params: {
             message: inbound,
             replyToIncomingByDefault: true,
           }),
+          ...(config.ttsPolicy.mode !== "off" && ttsProvider !== null
+            ? {
+                tts: {
+                  mode: config.ttsPolicy.mode,
+                  ...(config.ttsPolicy.voiceId !== undefined
+                    ? { voiceId: config.ttsPolicy.voiceId }
+                    : {}),
+                  ...(config.ttsPolicy.modelId !== undefined
+                    ? { modelId: config.ttsPolicy.modelId }
+                    : {}),
+                  outputFormat: config.ttsPolicy.outputFormat,
+                },
+              }
+            : {}),
           updateId: inbound.updateId,
         },
       });
@@ -296,6 +339,20 @@ export function createTelegramChannelService(params: {
             message: inbound,
             replyToIncomingByDefault: config.replyToIncomingByDefault,
           }),
+          ...(config.ttsPolicy.mode !== "off" && ttsProvider !== null
+            ? {
+                tts: {
+                  mode: config.ttsPolicy.mode,
+                  ...(config.ttsPolicy.voiceId !== undefined
+                    ? { voiceId: config.ttsPolicy.voiceId }
+                    : {}),
+                  ...(config.ttsPolicy.modelId !== undefined
+                    ? { modelId: config.ttsPolicy.modelId }
+                    : {}),
+                  outputFormat: config.ttsPolicy.outputFormat,
+                },
+              }
+            : {}),
           updateId: inbound.updateId,
         },
       });
@@ -344,6 +401,20 @@ export function createTelegramChannelService(params: {
             message: inbound,
             replyToIncomingByDefault: true,
           }),
+          ...(config.ttsPolicy.mode !== "off" && ttsProvider !== null
+            ? {
+                tts: {
+                  mode: config.ttsPolicy.mode,
+                  ...(config.ttsPolicy.voiceId !== undefined
+                    ? { voiceId: config.ttsPolicy.voiceId }
+                    : {}),
+                  ...(config.ttsPolicy.modelId !== undefined
+                    ? { modelId: config.ttsPolicy.modelId }
+                    : {}),
+                  outputFormat: config.ttsPolicy.outputFormat,
+                },
+              }
+            : {}),
           updateId: inbound.updateId,
         },
       });
@@ -398,6 +469,14 @@ export function createTelegramChannelService(params: {
         level: "info",
         event: "service_started",
       });
+      if (config.ttsPolicy.disabledReason !== undefined) {
+        await debugStore.noteEvent({
+          timestamp: new Date().toISOString(),
+          level: "warn",
+          event: "tts_unavailable",
+          detail: config.ttsPolicy.disabledReason,
+        });
+      }
 
       if (config.transportMode === "polling") {
         await bot.start();

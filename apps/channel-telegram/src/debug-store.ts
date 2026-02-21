@@ -13,6 +13,7 @@ export interface TelegramDebugEvent {
 export interface TelegramDebugSnapshot {
   generatedAt: string;
   transportMode: "polling" | "webhook";
+  outboundBackend: "memory" | "postgres";
   running: boolean;
   startedAt?: string;
   stoppedAt?: string;
@@ -26,6 +27,9 @@ export interface TelegramDebugSnapshot {
   };
   outbound: {
     queueDepth: number;
+    processing: number;
+    retryDepth: number;
+    deadLetterDepth: number;
   };
   recentEvents: TelegramDebugEvent[];
 }
@@ -40,12 +44,14 @@ export class TelegramDebugStore {
     filePath: string;
     maxEvents: number;
     transportMode: "polling" | "webhook";
+    outboundBackend: "memory" | "postgres";
   }) {
     this.filePath = params.filePath;
     this.maxEvents = params.maxEvents;
     this.snapshot = {
       generatedAt: new Date().toISOString(),
       transportMode: params.transportMode,
+      outboundBackend: params.outboundBackend,
       running: false,
       stats: {
         received: 0,
@@ -56,6 +62,9 @@ export class TelegramDebugStore {
       },
       outbound: {
         queueDepth: 0,
+        processing: 0,
+        retryDepth: 0,
+        deadLetterDepth: 0,
       },
       recentEvents: [],
     };
@@ -93,6 +102,20 @@ export class TelegramDebugStore {
 
   public async setQueueDepth(depth: number): Promise<void> {
     this.snapshot.outbound.queueDepth = Math.max(0, depth);
+    this.snapshot.generatedAt = new Date().toISOString();
+    await this.flush();
+  }
+
+  public async setOutboundStats(stats: {
+    queueDepth: number;
+    processing: number;
+    retryDepth: number;
+    deadLetterDepth: number;
+  }): Promise<void> {
+    this.snapshot.outbound.queueDepth = Math.max(0, stats.queueDepth);
+    this.snapshot.outbound.processing = Math.max(0, stats.processing);
+    this.snapshot.outbound.retryDepth = Math.max(0, stats.retryDepth);
+    this.snapshot.outbound.deadLetterDepth = Math.max(0, stats.deadLetterDepth);
     this.snapshot.generatedAt = new Date().toISOString();
     await this.flush();
   }

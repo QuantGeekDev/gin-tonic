@@ -1,4 +1,4 @@
-import type { Api, RawApi } from "grammy";
+import { InputFile, type Api, type RawApi } from "grammy";
 import type { TelegramInboundMessage } from "./types.js";
 
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
@@ -79,4 +79,43 @@ export async function sendTelegramReply(params: {
         : {}),
     });
   }
+}
+
+function resolveAudioExtension(contentType: string): string {
+  if (contentType.includes("ogg")) {
+    return "ogg";
+  }
+  if (contentType.includes("wav")) {
+    return "wav";
+  }
+  if (contentType.includes("mpeg") || contentType.includes("mp3")) {
+    return "mp3";
+  }
+  return "bin";
+}
+
+export async function sendTelegramVoiceReply(params: {
+  api: Api<RawApi>;
+  chatId: number;
+  audio: Uint8Array;
+  contentType: string;
+  options: TelegramReplyOptions;
+}): Promise<void> {
+  const extension = resolveAudioExtension(params.contentType);
+  await params.api.sendVoice(
+    params.chatId,
+    new InputFile(params.audio, `jihn-reply.${extension}`),
+    {
+      ...(params.options.messageThreadId !== undefined
+        ? { message_thread_id: params.options.messageThreadId }
+        : {}),
+      ...(params.options.replyToMessageId !== undefined
+        ? {
+            reply_parameters: {
+              message_id: params.options.replyToMessageId,
+            },
+          }
+        : {}),
+    },
+  );
 }
