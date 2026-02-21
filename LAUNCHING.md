@@ -8,6 +8,19 @@ This document is the operational runbook for starting Jihn locally.
 npm install
 ```
 
+## 1.1 Start queue persistence DB (Postgres)
+
+```bash
+docker compose up -d postgres
+```
+
+Optional tools:
+
+```bash
+docker compose --profile admin up -d pgadmin
+docker compose --profile queue up -d redis
+```
+
 ## 2. Configure environment
 
 Create `.env` at repo root.
@@ -50,12 +63,6 @@ JIHN_STORAGE_BACKEND=file
 ```
 
 ### Option C: Postgres-backed persistence (recommended for shared runtime)
-
-Start Postgres:
-
-```bash
-docker compose up -d postgres
-```
 
 Then set:
 
@@ -110,6 +117,48 @@ Then run:
 npm run dev:telegram
 ```
 
+Optional voice replies (ElevenLabs):
+
+```env
+JIHN_TTS_PROVIDER=elevenlabs
+ELEVENLABS_API_KEY=your_key
+JIHN_TTS_VOICE_ID=your_voice_id
+JIHN_TTS_MODE=text_and_voice
+JIHN_TTS_MAX_CHARS=1200
+JIHN_TELEGRAM_TTS_MODE=text_and_voice
+JIHN_TELEGRAM_TTS_OUTPUT_FORMAT=opus_48000_64
+```
+
+Optional durable outbound delivery:
+
+```env
+JIHN_TELEGRAM_OUTBOX_BACKEND=postgres
+DATABASE_URL=postgres://jihn:jihn@localhost:5432/jihn
+```
+
+Gateway daemon rate limiting defaults (phase 7 hardening):
+
+```env
+JIHN_GATEWAY_RATE_LIMIT_REQUESTS=120
+JIHN_GATEWAY_RATE_LIMIT_WINDOW_MS=60000
+```
+
+Prometheus metrics:
+
+- Gateway daemon: `GET /metrics` on gateway host/port
+- Telegram adapter (optional): enable `JIHN_TELEGRAM_METRICS_ENABLED=true`
+
+Runtime settings (allowlisted, persisted):
+
+- `JIHN_SETTINGS_FILE=.jihn/runtime-settings.json`
+- `JIHN_SETTINGS_PRECEDENCE=runtime_over_env|env_over_runtime`
+- Gateway WS methods:
+  - `settings.snapshot`
+  - `settings.update` (`{ key, value }`)
+- Hot-apply currently supported for:
+  - `JIHN_GATEWAY_RATE_LIMIT_REQUESTS`
+  - `JIHN_GATEWAY_RATE_LIMIT_WINDOW_MS`
+
 Webhook mode (production ingress):
 
 ```env
@@ -127,6 +176,19 @@ JIHN_TELEGRAM_WEBHOOK_HOST=0.0.0.0
 
 ```bash
 npm run test --workspace=packages/agent-core
+```
+
+### Plugin runtime checks
+
+```bash
+npm run dev:cli -- plugin list
+npm run dev:cli -- plugin validate
+```
+
+Inspect/debug one plugin:
+
+```bash
+npm run dev:cli -- plugin inspect --id <pluginId>
 ```
 
 ### CLI focused behavior tests
@@ -147,3 +209,18 @@ npm run test --workspace=apps/cli
 2. Use matching `peerId` + `scope=peer`.
 3. Send a message in web, continue in CLI.
 4. Confirm session continuity and shared memory visibility.
+
+## 6. Plugin SDK package
+
+For typed plugin authoring helpers:
+
+```bash
+npm run build --workspace=packages/plugin-sdk
+```
+
+Package path: `packages/plugin-sdk/src/index.ts`.
+
+## 7. Plugin docs
+
+1. Spec and contract: `PLUGIN_SYSTEM_V1.md`
+1. In-depth architecture and how-to guide: `PLUGIN_SYSTEM.md`

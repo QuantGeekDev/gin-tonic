@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: jihn-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jihn
+      POSTGRES_USER: jihn
+      POSTGRES_PASSWORD: jihn
+    ports:
+      - "5433:5432"
+    volumes:
+      - jihn_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jihn -d jihn"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Optional admin UI for local postgres inspection
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: jihn-pgadmin
+    restart: unless-stopped
+    profiles: ["admin"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@jihn.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Optional future queue backend for horizontal worker scale-out experiments.
+  # Current production queue path uses Postgres outbox.
+  redis:
+    image: redis:7-alpine
+    container_name: jihn-redis
+    restart: unless-stopped
+    profiles: ["queue"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  jihn_postgres_data:

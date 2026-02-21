@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jihn Internal Implementation Guide</title>
+  <style>
+    :root {
+      --bg: #0e1419;
+      --panel: #121b22;
+      --text: #e7edf3;
+      --muted: #9fb0bf;
+      --accent: #57c3dd;
+      --ok: #7ee787;
+      --warn: #e3b341;
+      --border: #243240;
+      --code: #0b1116;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, #18303a, transparent 42%),
+        radial-gradient(circle at bottom right, #3b211f, transparent 35%),
+        linear-gradient(145deg, #0d1318, #12202a 48%, #1c1413);
+      font: 15px/1.55 ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 28px 20px 56px;
+    }
+    article {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: color-mix(in oklab, var(--panel) 88%, black 12%);
+      box-shadow: 0 14px 34px rgba(0,0,0,.3);
+      padding: 26px;
+    }
+    h1, h2, h3 { line-height: 1.25; }
+    h1 { margin: 0 0 8px; font-size: 2rem; }
+    h2 {
+      margin-top: 28px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      font-size: 1.35rem;
+    }
+    h3 { color: var(--accent); margin-top: 18px; font-size: 1.05rem; }
+    p { margin: 8px 0; }
+    .meta { color: var(--muted); margin-bottom: 14px; }
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 8px;
+    }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: .92em;
+      background: var(--code);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: .08rem .35rem;
+    }
+    pre {
+      margin: 10px 0;
+      padding: 12px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--code);
+    }
+    pre code { background: transparent; border: 0; padding: 0; }
+    ul, ol { margin: 8px 0 8px 22px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 14px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th { color: var(--accent); font-weight: 600; }
+    .section { margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <main>
+    <article>
+      <h1>Jihn Internal Implementation Guide</h1>
+      <p class="meta">Scope: architecture kata implementation (Parts 1-8), MCP integration, refactors, validation strategy, and operator verification playbook.</p>
+      <div>
+        <span class="pill">Internal</span>
+        <span class="pill">Monorepo</span>
+        <span class="pill">CLI + Web</span>
+        <span class="pill">Agent Core Shared Runtime</span>
+      </div>
+
+      <h2>1. Architecture Summary</h2>
+      <p><strong>Core rule:</strong> channels are adapters; runtime is shared.</p>
+      <ul>
+        <li><code>packages/agent-core</code> contains session, gateway, compaction, memory, prompt composition, policy, routing, MCP integration.</li>
+        <li><code>apps/cli</code> and <code>apps/web</code> call shared runtime and should not import each other.</li>
+        <li>Session state is server/runtime-owned and persisted by session key.</li>
+      </ul>
+
+      <h2>2. Kata Parts Implemented</h2>
+
+      <h3>Part 1: Shared Agent Loop</h3>
+      <p><strong>What we implemented:</strong> shared <code>runAgentTurn</code> and shared model/config defaults in <code>agent-core</code>.</p>
+      <p><strong>Rationale:</strong> deterministic behavior parity between CLI and web.</p>
+      <p><strong>Verify:</strong></p>
+      <pre><code>npm run test --workspace=packages/agent-core
+npm run test --workspace=apps/cli</code></pre>
+
+      <h3>Part 2: JSONL Sessions + Shared Message Handler (2.1-2.7)</h3>
+      <p><strong>What we implemented:</strong> session key builder, session store <code>load/append/save</code>, shared gateway <code>handleMessage</code>, web server-owned contract.</p>
+      <p><strong>Rationale:</strong> no browser-owned canonical transcript; shared persistence path for both channels.</p>
+      <p><strong>Important:</strong> persistent session files are used (no temp-file strategy for save path in kata flow).</p>
+      <p><strong>Verify:</strong></p>
+      <ol>
+        <li>Use same <code>peerId</code> + <code>scope=peer</code> in web and CLI; confirm continuity.</li>
+        <li>Set <code>scope=channel-peer</code>; confirm web and CLI diverge (isolated histories).</li>
+      </ol>
+
+      <h3>Part 3: Composable Prompts</h3>
+      <p><strong>What we implemented:</strong> prompt assembly in <code>agent-core</code> from <code>AGENTS.md</code>, <code>SOUL.md</code>, <code>TOOLS.md</code> and optional per-agent dirs.</p>
+      <p><strong>Rationale:</strong> prompt governance via files, not hardcoded strings.</p>
+      <p><strong>Verify:</strong> edit workspace prompt files and run both channels; behavior changes in both.</p>
+
+      <h3>Part 4: Tool Policy + Permission Controls</h3>
+      <p><strong>What we implemented:</strong> shared policy executor with <code>allow/deny/review</code> modes and hooks.</p>
+      <p><strong>Rationale:</strong> single policy behavior across channels.</p>
+      <p><strong>Verify:</strong> deny a tool via env and confirm both web and CLI block it consistently.</p>
+
+      <h3>Part 5: Context Compaction</h3>
+      <p><strong>What we implemented:</strong> token-budget compaction in <code>packages/agent-core/src/sessions/compactor.ts</code> with deterministic outcomes.</p>
+      <p><strong>Rationale:</strong> keep model context bounded and channel-independent.</p>
+      <p><strong>Verify:</strong> use web "Simulate Compaction" and compare web vs CLI identicalness output.</p>
+
+      <h3>Part 6: Long-Term Memory</h3>
+      <p><strong>What we implemented:</strong> file-backed memory store with <code>save_memory</code> and <code>memory_search</code>, shared between channels.</p>
+      <p><strong>Rationale:</strong> durable cross-session knowledge.</p>
+      <p><strong>Verify:</strong> save memory in CLI interaction, search from web memory panel (and vice versa).</p>
+
+      <h3>Part 7: Gateway Hardening</h3>
+      <p><strong>What we implemented:</strong> per-session lock manager, optional idempotency keys, structured gateway logs/errors.</p>
+      <p><strong>Rationale:</strong> safe concurrent behavior and predictable retries.</p>
+      <p><strong>Verify:</strong></p>
+      <ul>
+        <li>Concurrent same-session requests serialize.</li>
+        <li>Same idempotency key + same payload returns cached result.</li>
+        <li>Same idempotency key + different payload returns conflict.</li>
+      </ul>
+
+      <h3>Part 8: Multi-Agent Routing</h3>
+      <p><strong>What we implemented:</strong> command routing in <code>agent-core</code> for <code>/research ...</code> and <code>/agent:&lt;name&gt; ...</code>.</p>
+      <p><strong>Rationale:</strong> separate per-agent session histories/config with shared infrastructure.</p>
+      <p><strong>Verify:</strong> send <code>/agent:ops hello</code> and observe session key agent segment changes.</p>
+
+      <h2>3. Session Scoping Model</h2>
+      <table>
+        <thead>
+          <tr><th>Scope</th><th>Purpose</th><th>Behavior</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>channel-peer</code> (default)</td><td>Safe channel isolation</td><td>CLI and web do not share transcript</td></tr>
+          <tr><td><code>peer</code></td><td>Cross-channel continuity</td><td>CLI and web share transcript for same peer</td></tr>
+          <tr><td><code>global</code></td><td>Shared bot state</td><td>Broad shared state, use carefully</td></tr>
+        </tbody>
+      </table>
+      <p>Canonical format: <code>agent:&lt;agentId&gt;:scope:&lt;scope&gt;:peer:&lt;peerId&gt;:channel:&lt;channelId&gt;</code></p>
+
+      <h2>4. MCP Integration (Added on Top of Existing Tool Model)</h2>
+      <p><strong>Design:</strong> local tools remain first-class; MCP tools are overlaid via namespaced tool IDs.</p>
+      <ul>
+        <li>MCP servers config parser: <code>packages/agent-core/src/mcp/config.ts</code></li>
+        <li>MCP registry and execution bridge: <code>packages/agent-core/src/mcp/registry.ts</code></li>
+        <li>Type contracts: <code>packages/agent-core/src/mcp/types.ts</code></li>
+        <li>Exposed MCP tool naming: <code>mcp__&lt;serverId&gt;__&lt;toolName&gt;</code></li>
+      </ul>
+
+      <h3>MCP Transport Notes</h3>
+      <ul>
+        <li>Uses official MCP TypeScript SDK <code>@modelcontextprotocol/sdk</code> with Streamable HTTP client transport.</li>
+        <li>Supports MCP session headers and reconnect/session semantics through SDK transport.</li>
+        <li>SSE transport is deprecated in SDK docs; Streamable HTTP is the preferred path.</li>
+      </ul>
+
+      <h3>MCP Environment Configuration</h3>
+      <pre><code>JIHN_MCP_SERVERS=[
+  {"id":"docs","url":"https://mcp.example.com/mcp","headers":{"Authorization":"Bearer ..."}}
+]
+JIHN_MCP_CACHE_TTL_MS=30000</code></pre>
+
+      <h3>MCP Debug Surface</h3>
+      <ul>
+        <li>API endpoint: <code>GET/POST /api/mcp</code></li>
+        <li>Dashboard panel: MCP server status, refresh, error details, exposed tool mapping.</li>
+      </ul>
+
+      <h2>5. Refactors Completed</h2>
+      <ol>
+        <li>Type extraction to semantic modules (runtime, web API contracts, CLI UI types).</li>
+        <li>Web route validation extracted to <code>apps/web/app/api/agent/validation.ts</code>.</li>
+        <li>Dashboard behavior split into hooks:
+          <ul>
+            <li><code>use-agent-session.ts</code></li>
+            <li><code>use-memory-debug.ts</code></li>
+            <li><code>use-mcp-debug.ts</code></li>
+          </ul>
+        </li>
+        <li>Removed duplicate CLI-local custom tool implementations to prevent drift; shared runtime is canonical.</li>
+      </ol>
+
+      <h2>6. Test & Verification Playbook</h2>
+
+      <h3>Automated</h3>
+      <pre><code>npm run test --workspace=packages/agent-core
+npm run test --workspace=apps/cli
+npx tsc -p apps/web/tsconfig.json --noEmit</code></pre>
+
+      <h3>Manual - Core</h3>
+      <ol>
+        <li>Run web and CLI.</li>
+        <li>Send same request in both using same peer and <code>scope=peer</code>; verify continuity.</li>
+        <li>Switch to <code>channel-peer</code>; verify isolation.</li>
+        <li>Use <code>/research</code> and <code>/agent:&lt;name&gt;</code>; verify session routing changes.</li>
+      </ol>
+
+      <h3>Manual - Policy</h3>
+      <ol>
+        <li>Set <code>JIHN_TOOL_POLICY_MODE=deny</code> and tool list.</li>
+        <li>Trigger blocked tool in web and CLI.</li>
+        <li>Verify structured blocked behavior in both.</li>
+      </ol>
+
+      <h3>Manual - Compaction</h3>
+      <ol>
+        <li>Set context token budget env vars.</li>
+        <li>Create long conversation.</li>
+        <li>Use dashboard "Simulate Compaction"; verify web/CLI compare result.</li>
+      </ol>
+
+      <h3>Manual - Memory</h3>
+      <ol>
+        <li>Save memory via one channel.</li>
+        <li>Search memory via the other channel.</li>
+        <li>Verify persisted cross-channel retrieval.</li>
+      </ol>
+
+      <h3>Manual - MCP</h3>
+      <ol>
+        <li>Configure <code>JIHN_MCP_SERVERS</code> with at least one reachable MCP endpoint.</li>
+        <li>Load dashboard; open MCP Debug panel.</li>
+        <li>Verify server status and exposed tools list.</li>
+        <li>Invoke an MCP tool through agent flow (tool call should appear in activity log).</li>
+        <li>Use MCP refresh button and verify snapshot timestamp/tool list updates.</li>
+      </ol>
+
+      <h2>7. Rationale Summary (Enterprise Angle)</h2>
+      <ul>
+        <li><strong>Single runtime:</strong> minimizes channel drift and lowers operational risk.</li>
+        <li><strong>Server-owned sessions:</strong> preserves integrity and auditability of transcript state.</li>
+        <li><strong>Structured gateway errors/logs:</strong> improves observability and retry safety.</li>
+        <li><strong>Policy centralization:</strong> enforces consistent trust boundaries.</li>
+        <li><strong>MCP overlay model:</strong> extends capability without rewriting local tool model.</li>
+        <li><strong>Hook/module split:</strong> improves debuggability and maintainability.</li>
+      </ul>
+
+      <h2>8. Key File Map</h2>
+      <pre><code>packages/agent-core/src/gateway/handle-message.ts
+packages/agent-core/src/gateway/hardening.ts
+packages/agent-core/src/sessions/compactor.ts
+packages/agent-core/src/memory/store.ts
+packages/agent-core/src/routing/router.ts
+packages/agent-core/src/mcp/config.ts
+packages/agent-core/src/mcp/registry.ts
+packages/agent-core/src/mcp/types.ts
+
+apps/web/app/api/agent/route.ts
+apps/web/app/api/agent/validation.ts
+apps/web/app/api/mcp/route.ts
+apps/web/app/hooks/use-agent-session.ts
+apps/web/app/hooks/use-memory-debug.ts
+apps/web/app/hooks/use-mcp-debug.ts
+apps/web/app/page.tsx
+
+apps/cli/src/index.ts
+apps/cli/src/ui/app.tsx</code></pre>
+
+      <p class="meta">This document is intended to be updated after every architecture-level change or kata step.</p>
+    </article>
+  </main>
+</body>
+</html>

@@ -18,6 +18,11 @@ Jihn has two channel adapters over one shared runtime:
 npm install
 ```
 
+Configuration templates:
+
+- `.env` (local defaults for gateway + telegram + queue)
+- `.env.example` (full reference with placeholders)
+
 ## Launch
 
 ### Web dashboard
@@ -103,6 +108,30 @@ Memory embedding backfill can be triggered from the web API:
 
 - `POST /api/memory` with `{ "action": "reindex_embeddings", "limit": 200 }`
 
+## Text-to-speech (dashboard + Telegram)
+
+Shared TTS provider config:
+
+```env
+JIHN_TTS_PROVIDER=elevenlabs
+ELEVENLABS_API_KEY=...
+JIHN_TTS_VOICE_ID=...
+JIHN_TTS_MODEL_ID=eleven_multilingual_v2
+JIHN_TTS_OUTPUT_FORMAT=mp3_44100_128
+JIHN_TTS_MODE=off
+JIHN_TTS_MAX_CHARS=1200
+```
+
+Telegram reply voice mode:
+
+```env
+JIHN_TELEGRAM_TTS_MODE=off # off | text_and_voice | voice_only
+JIHN_TELEGRAM_TTS_OUTPUT_FORMAT=opus_48000_64
+JIHN_TELEGRAM_TTS_MAX_CHARS=800
+```
+
+Channel-specific overrides follow `JIHN_<CHANNEL>_TTS_*` naming (example: `JIHN_TELEGRAM_TTS_MODE`).
+
 ## Persistence backend
 
 Default: file-backed storage (`~/.jihn` + workspace `.jihn` files).
@@ -111,7 +140,7 @@ Postgres mode:
 
 ```env
 JIHN_STORAGE_BACKEND=postgres
-DATABASE_URL=postgres://jihn:jihn@localhost:5432/jihn
+DATABASE_URL=postgres://jihn:jihn@localhost:5433/jihn
 ```
 
 Start local Postgres:
@@ -152,11 +181,63 @@ Supported capabilities:
 - `turn`: intercept before/after a gateway turn
 - `tool_intercept`: intercept before/after tool execution
 
+Supported permissions:
+
+- `memory.read`, `memory.write`
+- `session.read`, `session.write`
+- `channel.send`, `channel.receive`
+- `network.http`
+- `filesystem.read`, `filesystem.write`
+
+Optional manifest hardening fields:
+
+- `compatibility.minHostVersion`
+- `compatibility.maxHostVersion`
+- `executionMode` (`in_process` or `worker_thread`)
+- `healthcheck.timeoutMs`
+
 Hook policy controls are manifest-driven:
 
 - `hookPolicy`: default timeout/error behavior
 - `hookPolicies.<hookName>`: per-hook overrides
 - `onError`: `continue` (fail-open) or `fail` (fail-closed)
+
+Lifecycle hooks:
+
+- `onInstall`
+- `onEnable`
+- `onDisable`
+- `onUnload`
+- `onHealthCheck`
+
+Circuit breaker:
+
+- Plugin runtime tracks repeated failures per plugin.
+- When threshold is exceeded in a time window, plugin moves to `open_circuit`.
+- After cooldown, plugin is eligible again.
+
+Plugin CLI commands:
+
+```bash
+npm run dev:cli -- plugin list
+npm run dev:cli -- plugin validate
+npm run dev:cli -- plugin inspect --id <pluginId>
+npm run dev:cli -- plugin enable --id <pluginId>
+npm run dev:cli -- plugin disable --id <pluginId>
+npm run dev:cli -- plugin create --id <pluginId> --name "My Plugin"
+```
+
+Web debug:
+
+- `GET /api/plugins` returns loaded manifests, status snapshots, lifecycle health, and runtime events.
+- Dashboard `Plugin Runtime` panel displays this data.
+- Dashboard `Runtime Settings` panel lets you view/update allowlisted runtime keys through gateway control-plane.
+- Runtime settings precedence can be controlled with `JIHN_SETTINGS_PRECEDENCE`:
+  - `runtime_over_env` (default): persisted runtime settings override env for allowlisted keys.
+  - `env_over_runtime`: env values are treated as locked and cannot be overridden from runtime settings.
+
+Detailed platform contract: `PLUGIN_SYSTEM_V1.md`.
+Implementation and usage guide: `PLUGIN_SYSTEM.md`.
 
 ## Common commands
 

@@ -10,12 +10,13 @@
     "dev": "npm run dev --workspace=apps/web",
     "dev:all": "npm run dev:web & npm run dev:cli",
     "dev:cli": "npm run dev --workspace=apps/cli",
+    "dev:gateway": "npm run dev --workspace=apps/gateway-daemon",
     "dev:telegram": "npm run dev --workspace=apps/channel-telegram",
     "dev:web": "npm run dev --workspace=apps/web",
-    "build": "npm run build --workspace=packages/agent-core && npm run build --workspace=apps/cli && npm run build --workspace=apps/web && npm run build --workspace=apps/channel-telegram",
-    "test": "npm run test --workspace=packages/agent-core && npm run test --workspace=apps/cli && npm run test --workspace=apps/channel-telegram",
+    "build": "npm run build --workspace=packages/agent-core && npm run build --workspace=packages/gateway-client && npm run build --workspace=packages/plugin-sdk && npm run build --workspace=apps/gateway-daemon && npm run build --workspace=apps/cli && npm run build --workspace=apps/web && npm run build --workspace=apps/channel-telegram",
+    "test": "npm run test --workspace=packages/agent-core && npm run test --workspace=packages/gateway-client && npm run test --workspace=apps/gateway-daemon && npm run test --workspace=apps/cli && npm run test --workspace=apps/channel-telegram",
     "test:cli:behaviors": "npm run test:behaviors --workspace=apps/cli",
-    "lint": "npm run lint --workspace=packages/agent-core && npm run lint --workspace=apps/cli && npm run lint --workspace=apps/web && npm run lint --workspace=apps/channel-telegram"
+    "lint": "npm run lint --workspace=packages/agent-core && npm run lint --workspace=packages/gateway-client && npm run lint --workspace=packages/plugin-sdk && npm run lint --workspace=apps/gateway-daemon && npm run lint --workspace=apps/cli && npm run lint --workspace=apps/web && npm run lint --workspace=apps/channel-telegram"
   },
   "devDependencies": {
     "pnpm": "^10.9.0"
