@@ -1,7 +1,6 @@
 export const DEFAULT_SYSTEM_PROMPT = "You are Jihn. Be concise, pragmatic, and use tools whenever they improve accuracy.";
 export const DEFAULT_MAX_TURNS = 20;
 export const DEFAULT_MAX_TOKENS = 1024;
-export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929";
 export function resolveSystemPrompt(rawPrompt) {
     if (rawPrompt === undefined) {
         return DEFAULT_SYSTEM_PROMPT;

@@ -86,6 +86,11 @@ export {
 export { createSharedToolRuntime } from "./runtime/tools.js";
 export { createDefaultWebSearchClient } from "./runtime/web-search.js";
 export {
+  createElevenLabsTtsProvider,
+  createTtsProviderFromEnv,
+  resolveTtsConfigFromEnv,
+} from "./tts/elevenlabs.js";
+export {
   DEFAULT_GATEWAY_LOGGER,
   DEFAULT_IDEMPOTENCY_STORE,
   DEFAULT_SESSION_LOCK_MANAGER,
@@ -114,6 +119,7 @@ export {
   ChannelAuthPairingMiddleware,
   FileChannelPairingStore,
 } from "./channels/auth/pairing.js";
+export { resolveChannelTtsPolicyFromEnv } from "./channels/tts-policy.js";
 export {
   createPluginRuntime,
   createPluginRuntimeFromLoaded,
@@ -197,6 +203,7 @@ export type {
   ChannelAuthPairingMiddlewareOptions,
   ChannelPairingStore,
 } from "./channels/auth/pairing.js";
+export type { ChannelTtsMode, ChannelTtsPolicy } from "./channels/tts-policy.js";
 export type {
   JihnPlugin,
   JihnPluginFactory,
@@ -275,6 +282,14 @@ export type {
   BuildSharedToolRuntimeOptions,
   SharedToolRuntime,
 } from "./runtime/types.js";
+export type {
+  ElevenLabsTtsOptions,
+  ResolvedTtsConfig,
+  TtsProvider,
+  TtsProviderId,
+  TtsSynthesisInput,
+  TtsSynthesisResult,
+} from "./tts/elevenlabs.js";
 export type {
   WebFetchInput,
   WebFetchResultItem,

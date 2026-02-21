@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { DEFAULT_SYSTEM_PROMPT } from "./agent.js";
+import type { PluginRuntime } from "../plugins/runtime.js";
 
 const PROMPT_FILE_NAMES = ["AGENTS.md", "SOUL.md", "TOOLS.md"] as const;
 const DEFAULT_AGENTS_DIRECTORY = "agents";
@@ -10,6 +11,7 @@ export interface ComposeSystemPromptOptions {
   agentId?: string;
   agentsDirectoryName?: string;
   defaultPrompt?: string;
+  pluginRuntime?: PluginRuntime;
 }
 
 function sanitizeDirectorySegment(value: string): string {
@@ -66,6 +68,12 @@ export async function composeSystemPrompt(
     }
   }
 
-  return sections.join("\n\n");
+  const combined = sections.join("\n\n");
+  if (options.pluginRuntime === undefined) {
+    return combined;
+  }
+  return options.pluginRuntime.applyPromptHooks(combined, {
+    workspaceDir,
+    ...(agentId !== null ? { agentId } : {}),
+  });
 }
-

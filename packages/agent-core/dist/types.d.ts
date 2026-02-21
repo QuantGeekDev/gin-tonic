@@ -1,12 +1,12 @@
-import type Anthropic from "@anthropic-ai/sdk";
 import type { ToolDefinition } from "./tools.js";
+import type { LlmProviderClient } from "./llm/types.js";
 import type { Message } from "./types/message.js";
 export type { ContentBlock, TextBlock, ToolResultBlock, ToolUseBlock, } from "./types/message.js";
 export type { Message } from "./types/message.js";
 export type { SessionKeyInput, SessionScope } from "./types/session.js";
 export { SESSION_SCOPES } from "./types/session.js";
 export interface RunAgentTurnParams {
-    client: Anthropic;
+    client: LlmProviderClient;
     messages: Message[];
     systemPrompt: string;
     tools: ToolDefinition[];

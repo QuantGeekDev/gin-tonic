@@ -47,6 +47,13 @@ export async function composeSystemPrompt(options = {}) {
             sections.push(`${buildHeader(`Agent ${agentId} ${fileName}`)}\n${agentContent}`);
         }
     }
-    return sections.join("\n\n");
+    const combined = sections.join("\n\n");
+    if (options.pluginRuntime === undefined) {
+        return combined;
+    }
+    return options.pluginRuntime.applyPromptHooks(combined, {
+        workspaceDir,
+        ...(agentId !== null ? { agentId } : {}),
+    });
 }
 //# sourceMappingURL=prompt-composer.js.map

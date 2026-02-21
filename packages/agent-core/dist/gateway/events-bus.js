@@ -1,0 +1,77 @@
+const DEFAULT_MAX_EVENTS = 2_000;
+function nowIso() {
+    return new Date().toISOString();
+}
+export class InMemoryGatewayEventBus {
+    maxEvents;
+    events = [];
+    subscriptions = new Map();
+    seq = 0;
+    constructor(options = {}) {
+        const requested = options.maxEvents ?? DEFAULT_MAX_EVENTS;
+        this.maxEvents = Number.isFinite(requested) && requested > 0
+            ? Math.floor(requested)
+            : DEFAULT_MAX_EVENTS;
+    }
+    getCurrentSeq() {
+        return this.seq;
+    }
+    emit(type, payload) {
+        const event = {
+            seq: this.seq + 1,
+            timestamp: nowIso(),
+            type,
+            payload,
+        };
+        this.seq = event.seq;
+        this.events.push(event);
+        if (this.events.length > this.maxEvents) {
+            const removeCount = this.events.length - this.maxEvents;
+            this.events.splice(0, removeCount);
+        }
+        for (const subscription of this.subscriptions.values()) {
+            if (subscription.eventTypes !== null && !subscription.eventTypes.has(event.type)) {
+                continue;
+            }
+            subscription.onEvent(event);
+        }
+        return event;
+    }
+    listSince(seq, limit = 200) {
+        const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
+        if (safeLimit <= 0) {
+            return [];
+        }
+        const startIndex = this.events.findIndex((event) => event.seq > seq);
+        if (startIndex === -1) {
+            return [];
+        }
+        return this.events.slice(startIndex, startIndex + safeLimit);
+    }
+    subscribe(options) {
+        const id = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        const eventTypes = options.eventTypes !== undefined && options.eventTypes.length > 0
+            ? new Set(options.eventTypes)
+            : null;
+        if (options.replayFromSeq !== undefined) {
+            const replay = this.listSince(options.replayFromSeq);
+            for (const event of replay) {
+                if (eventTypes !== null && !eventTypes.has(event.type)) {
+                    continue;
+                }
+                options.onEvent(event);
+            }
+        }
+        this.subscriptions.set(id, {
+            eventTypes,
+            onEvent: options.onEvent,
+        });
+        return {
+            id,
+            unsubscribe: () => {
+                this.subscriptions.delete(id);
+            },
+        };
+    }
+}
+//# sourceMappingURL=events-bus.js.map

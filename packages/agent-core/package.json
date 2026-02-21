@@ -5,10 +5,23 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.74.0"
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@elevenlabs/elevenlabs-js": "^2.36.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@opentelemetry/api": "^1.9.0",
+    "drizzle-orm": "^0.44.5",
+    "openai": "^6.6.0",
+    "pino": "^9.9.0",
+    "postgres": "^3.4.7",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.6"
   },
   "scripts": {
     "build": "tsc",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "test": "npm run build && NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs",
     "lint": "eslint ."
   }

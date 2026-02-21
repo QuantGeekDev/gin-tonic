@@ -1,0 +1,1 @@
+{"version":3,"file":"logger.d.ts","sourceRoot":"","sources":["../../src/observability/logger.ts"],"names":[],"mappings":"AAAA,OAAa,EAAE,KAAK,MAAM,EAAsB,MAAM,MAAM,CAAC;AAE7D,MAAM,WAAW,iBAAiB;IAChC,IAAI,EAAE,MAAM,CAAC;IACb,KAAK,CAAC,EAAE,MAAM,CAAC;IACf,IAAI,CAAC,EAAE,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,GAAG,IAAI,CAAC;CACvC;AAqBD,wBAAgB,gBAAgB,CAAC,OAAO,EAAE,iBAAiB,GAAG,MAAM,CAYnE"}

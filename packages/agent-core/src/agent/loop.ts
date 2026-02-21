@@ -1,63 +1,16 @@
-import type Anthropic from "@anthropic-ai/sdk";
-import type {
-  ContentBlockParam,
-  MessageCountTokensParams,
-  MessageParam,
-  Tool,
-} from "@anthropic-ai/sdk/resources/messages/messages";
 import {
-  DEFAULT_ANTHROPIC_MODEL,
   DEFAULT_MAX_TOKENS,
   DEFAULT_MAX_TURNS,
 } from "../config/agent.js";
-import type { ToolDefinition } from "../tools.js";
+import { DEFAULT_LLM_MODEL } from "../llm/registry.js";
+import { LLM_STOP_REASONS } from "../llm/types.js";
 import {
-  type ContentBlock,
   type Message,
   type RunAgentTurnParams,
   type RunAgentTurnResult,
   type ToolResultBlock,
   type ToolUseBlock,
 } from "../types.js";
-
-function toToolParam(definition: ToolDefinition): Tool {
-  return {
-    name: definition.name,
-    description: definition.description,
-    input_schema: (definition.input_schema ??
-      definition.inputSchema) as Tool["input_schema"],
-  };
-}
-
-function toContentBlocks(
-  content: Message["content"],
-): ContentBlockParam[] | string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content.map((block) => {
-    if (block.type === "tool_result") {
-      return {
-        type: "tool_result",
-        tool_use_id: block.tool_use_id,
-        content: block.content,
-      };
-    }
-    return block as ContentBlockParam;
-  });
-}
-
-function toMessageParam(message: Message): MessageParam {
-  return {
-    role: message.role,
-    content: toContentBlocks(message.content),
-  };
-}
-
-function serializeBlocks(content: Anthropic.ContentBlock[]): ContentBlock[] {
-  return JSON.parse(JSON.stringify(content)) as ContentBlock[];
-}
 
 function readTextBlocks(content: Message["content"]): string {
   if (typeof content === "string") {
@@ -90,47 +43,43 @@ function toRecordInput(input: unknown): Record<string, unknown> {
 export async function runAgentTurn(
   params: RunAgentTurnParams,
 ): Promise<RunAgentTurnResult> {
-  const model = params.model ?? DEFAULT_ANTHROPIC_MODEL;
+  const model = params.model ?? DEFAULT_LLM_MODEL;
   const maxTurns = params.maxTurns ?? DEFAULT_MAX_TURNS;
   const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
   const messages = [...params.messages];
-  const tools = params.tools.map(toToolParam);
   let estimatedInputTokens = 0;
   let inputTokens = 0;
   let outputTokens = 0;
 
   for (let turn = 0; turn < maxTurns; turn += 1) {
-    if (typeof params.client.messages.countTokens === "function") {
-      const tokenCountParams: MessageCountTokensParams = {
+    if (typeof params.client.countTokens === "function") {
+      const tokenEstimate = await params.client.countTokens({
         model,
-        system: params.systemPrompt,
-        tools,
-        messages: messages.map(toMessageParam),
-      };
-      const tokenEstimate =
-        await params.client.messages.countTokens(tokenCountParams);
-      estimatedInputTokens += tokenEstimate.input_tokens;
+        systemPrompt: params.systemPrompt,
+        tools: params.tools,
+        messages,
+      });
+      estimatedInputTokens += tokenEstimate;
     }
 
-    const response = await params.client.messages.create({
+    const response = await params.client.createTurn({
       model,
-      system: params.systemPrompt,
-      tools,
-      max_tokens: maxTokens,
-      messages: messages.map(toMessageParam),
+      systemPrompt: params.systemPrompt,
+      tools: params.tools,
+      maxTokens,
+      messages,
     });
-    inputTokens += response.usage?.input_tokens ?? 0;
-    outputTokens += response.usage?.output_tokens ?? 0;
+    inputTokens += response.usage.inputTokens;
+    outputTokens += response.usage.outputTokens;
 
-    const serializedBlocks = serializeBlocks(response.content);
     messages.push({
       role: "assistant",
-      content: serializedBlocks,
+      content: response.content,
     });
 
-    if (response.stop_reason === "end_turn") {
+    if (response.stopReason === LLM_STOP_REASONS.END_TURN) {
       return {
-        text: readTextBlocks(serializedBlocks),
+        text: readTextBlocks(response.content),
         messages,
         usage: {
           estimatedInputTokens,
@@ -140,9 +89,9 @@ export async function runAgentTurn(
       };
     }
 
-    if (response.stop_reason !== "tool_use") {
+    if (response.stopReason !== LLM_STOP_REASONS.TOOL_USE) {
       return {
-        text: readTextBlocks(serializedBlocks),
+        text: readTextBlocks(response.content),
         messages,
         usage: {
           estimatedInputTokens,
@@ -152,9 +101,11 @@ export async function runAgentTurn(
       };
     }
 
-    const toolUseBlocks = serializedBlocks.filter(
-      (block): block is ToolUseBlock => block.type === "tool_use",
-    );
+    const toolUseBlocks = Array.isArray(response.content)
+      ? response.content.filter(
+          (block): block is ToolUseBlock => block.type === "tool_use",
+        )
+      : [];
 
     const toolResults: ToolResultBlock[] = [];
     for (const block of toolUseBlocks) {

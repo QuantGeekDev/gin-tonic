@@ -1,9 +1,13 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import { type SessionCompactionOptions } from "../sessions/compactor.js";
 import { SessionStore } from "../sessions/store.js";
+import { type ToolPolicy } from "../tools/policy.js";
+import type { PluginRuntime } from "../plugins/runtime.js";
+import { type GatewayIdempotencyStore, type GatewayLogger, type SessionLockManager } from "./hardening.js";
 import type { ToolDefinition } from "../tools.js";
 import type { Message } from "../types/message.js";
 import type { SessionScope } from "../types/session.js";
 import type { RunAgentTurnParams, RunAgentTurnResult } from "../types.js";
+import type { LlmProviderClient } from "../llm/types.js";
 type TurnRunner = (params: RunAgentTurnParams) => Promise<RunAgentTurnResult>;
 export interface HandleMessageRoutingInput {
     agentId?: string;
@@ -19,7 +23,7 @@ export interface HandleMessageResolvedRouting {
     sessionKey: string;
 }
 export interface HandleMessageParams {
-    client: Anthropic;
+    client: LlmProviderClient;
     text: string;
     systemPrompt: string;
     tools: ToolDefinition[];
@@ -29,7 +33,15 @@ export interface HandleMessageParams {
     maxTokens?: number;
     routing?: HandleMessageRoutingInput;
     sessionStore?: SessionStore;
+    toolPolicy?: ToolPolicy;
+    sessionCompaction?: SessionCompactionOptions;
+    lockManager?: SessionLockManager;
+    idempotencyStore?: GatewayIdempotencyStore;
+    idempotencyKey?: string;
+    logger?: GatewayLogger;
+    requestId?: string;
     runTurn?: TurnRunner;
+    pluginRuntime?: PluginRuntime;
 }
 export interface HandleMessageResult {
     text: string;
@@ -37,6 +49,16 @@ export interface HandleMessageResult {
     usage: RunAgentTurnResult["usage"];
     routing: HandleMessageResolvedRouting;
     persistenceMode: "append" | "save";
+    compaction?: {
+        compacted: boolean;
+        strategy: "none" | "summary" | "tail_trim";
+        beforeTokens: number;
+        afterTokens: number;
+        beforeMessageCount: number;
+        afterMessageCount: number;
+        summaryPreview?: string;
+    } | undefined;
+    idempotencyHit?: boolean;
 }
 export declare function handleMessage(params: HandleMessageParams): Promise<HandleMessageResult>;
 export {};
