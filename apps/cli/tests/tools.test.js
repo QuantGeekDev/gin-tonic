@@ -1,42 +1,33 @@
 import { describe, expect, it } from "@jest/globals";
 
-import { CurrentTimeTool } from "../dist/custom_tools/current_time.tool.js";
-import { CalculateTool } from "../dist/custom_tools/calculate.tool.js";
+import { createSharedToolRuntime } from "@jihn/agent-core";
 
 describe("custom tools", () => {
-  describe("CurrentTimeTool", () => {
+  describe("current_time", () => {
     it("returns an ISO timestamp", async () => {
-      const input = CurrentTimeTool.parseInput({});
-      const output = await CurrentTimeTool.handler(input);
+      const runtime = createSharedToolRuntime();
+      const output = await runtime.execute("current_time", {});
       expect(Number.isNaN(Date.parse(output))).toBe(false);
       expect(output).toContain("T");
     });
-
-    it.each([undefined, null, {}])("accepts empty input shape (%p)", (validInput) => {
-      expect(() => CurrentTimeTool.parseInput(validInput)).not.toThrow();
-    });
-
-    it.each(["bad", []])(
-      "rejects invalid input shape (%p)",
-      (invalidInput) => {
-        expect(() => CurrentTimeTool.parseInput(invalidInput)).toThrow();
-      },
-    );
   });
 
-  describe("CalculateTool", () => {
+  describe("calculate", () => {
     it("evaluates arithmetic expressions", async () => {
-      const input = CalculateTool.parseInput({ expression: "1337 * 42" });
-      expect(CalculateTool.handler(input)).toBe("56154");
+      const runtime = createSharedToolRuntime();
+      await expect(
+        runtime.execute("calculate", { expression: "1337 * 42" }),
+      ).resolves.toBe("56154");
     });
 
     it.each([
       { expression: "" },
       { expression: "2 + abc" },
-      null,
-      "bad",
-    ])("rejects invalid expression input (%p)", (invalidInput) => {
-      expect(() => CalculateTool.parseInput(invalidInput)).toThrow();
+    ])("rejects invalid expression input (%p)", async (invalidInput) => {
+      const runtime = createSharedToolRuntime();
+      await expect(
+        runtime.execute("calculate", invalidInput),
+      ).rejects.toThrow();
     });
   });
 });

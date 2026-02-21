@@ -1,36 +1,18 @@
-import type Anthropic from "@anthropic-ai/sdk";
-import { handleMessage } from "@jihn/agent-core";
+import {
+  buildSessionKey,
+  compactSessionMessages,
+  handleMessage,
+  resolveAgentRoute,
+} from "@jihn/agent-core";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import { useMemo, useState } from "react";
-import type { ToolDefinition } from "../domain/tool.js";
-import type { AnthropicModel } from "../providers/anthropic/config.js";
-import type { Message, SessionScope, SessionStore } from "@jihn/agent-core";
-
-type Mode = "menu" | "chat" | "tools";
-
-interface TranscriptLine {
-  kind: "user" | "assistant" | "tool" | "system" | "error";
-  text: string;
-}
-
-interface JihnAppProps {
-  client: Anthropic;
-  model: AnthropicModel;
-  tools: ToolDefinition[];
-  executeTool: (name: string, input: Record<string, unknown>) => Promise<string>;
-  resolveSystemPrompt: () => Promise<string>;
-  maxTurns: number;
-  maxTokens: number;
-  sessionStore?: SessionStore;
-  agentId?: string;
-  scope?: SessionScope;
-  channelId?: string;
-  peerId?: string;
-}
+import type { AgentMessage, JihnAppProps, Mode, TokenUsage, TranscriptLine } from "./types.js";
+import type { Message } from "@jihn/agent-core";
 
 const MENU_ITEMS = [
   "Start Chat",
+  "Run Diagnostics",
   "Show Tools",
   "Clear Conversation",
   "Quit",
@@ -86,7 +68,7 @@ export function JihnApp(props: JihnAppProps) {
   const [inputValue, setInputValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [activePeerId, setActivePeerId] = useState(initialPeerId);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [turnCount, setTurnCount] = useState(0);
   const [transcript, setTranscript] = useState<TranscriptLine[]>([
     {
@@ -94,7 +76,7 @@ export function JihnApp(props: JihnAppProps) {
       text: "Welcome to Jihn Agent UI. Select an option to begin.",
     },
   ]);
-  const [usage, setUsage] = useState({
+  const [usage, setUsage] = useState<TokenUsage>({
     estimatedInputTokens: 0,
     inputTokens: 0,
     outputTokens: 0,
@@ -117,6 +99,94 @@ export function JihnApp(props: JihnAppProps) {
   const pushTranscript = (line: TranscriptLine): void => {
     setTranscript((prev) => [...prev, line]);
     setScrollOffset(0);
+  };
+
+  const runDiagnostics = async (): Promise<void> => {
+    if (busy) {
+      return;
+    }
+
+    setBusy(true);
+    setStatus("Running diagnostics...");
+    pushTranscript({ kind: "system", text: "Running quick diagnostics..." });
+
+    const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
+
+    try {
+      const sampleMessages = [
+        { role: "user" as const, content: "one ".repeat(80) },
+        { role: "assistant" as const, content: "two ".repeat(80) },
+        { role: "user" as const, content: "three ".repeat(80) },
+        { role: "assistant" as const, content: "four ".repeat(80) },
+        { role: "user" as const, content: "five ".repeat(80) },
+        { role: "assistant" as const, content: "six ".repeat(80) },
+        { role: "user" as const, content: "seven ".repeat(80) },
+      ];
+      const countTokens = async (
+        messages: Message[],
+      ): Promise<number> =>
+        Math.max(1, Math.ceil(JSON.stringify(messages).length / 4));
+      const a = await compactSessionMessages(
+        sampleMessages,
+        { tokenBudget: 350 },
+        countTokens,
+      );
+      const b = await compactSessionMessages(
+        sampleMessages,
+        { tokenBudget: 350 },
+        countTokens,
+      );
+      checks.push({
+        name: "compaction_determinism",
+        ok: JSON.stringify(a.messages) === JSON.stringify(b.messages),
+        detail: `${a.beforeTokens} -> ${a.afterTokens} (${a.strategy})`,
+      });
+
+      const routed = resolveAgentRoute({
+        text: "/agent:research draft a report",
+        defaultAgentId: "main",
+      });
+      checks.push({
+        name: "routing_directive",
+        ok: routed.agentId === "research" && routed.text === "draft a report",
+        detail: `agent=${routed.agentId} text="${routed.text}"`,
+      });
+
+      const sessionKey = buildSessionKey({
+        agentId: "main",
+        scope: "peer",
+        peerId: "alex",
+        channelId: "cli",
+      });
+      checks.push({
+        name: "session_key_scope",
+        ok: sessionKey === "agent:main:scope:peer:peer:alex:channel:cli",
+        detail: sessionKey,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      checks.push({
+        name: "diagnostic_runtime",
+        ok: false,
+        detail: message,
+      });
+    }
+
+    for (const check of checks) {
+      pushTranscript({
+        kind: check.ok ? "system" : "error",
+        text: `${check.ok ? "PASS" : "FAIL"} ${check.name} :: ${check.detail}`,
+      });
+    }
+
+    const passed = checks.filter((check) => check.ok).length;
+    const failed = checks.length - passed;
+    setStatus(failed === 0 ? "Diagnostics passed" : "Diagnostics found issues");
+    pushTranscript({
+      kind: failed === 0 ? "system" : "error",
+      text: `Diagnostics summary: ${passed} passed, ${failed} failed`,
+    });
+    setBusy(false);
   };
 
   const resetConversation = (reason: string): void => {
@@ -156,6 +226,8 @@ export function JihnApp(props: JihnAppProps) {
         if (selected === "Start Chat") {
           setMode("chat");
           setStatus("Chat mode");
+        } else if (selected === "Run Diagnostics") {
+          void runDiagnostics();
         } else if (selected === "Show Tools") {
           setMode("tools");
           setStatus("Viewing registered tools");
@@ -230,9 +302,14 @@ export function JihnApp(props: JihnAppProps) {
     if (userText === "/help") {
       pushTranscript({
         kind: "system",
-        text: "Shortcuts: PgUp/PgDn scroll, Esc menu, /tools, /clear, /menu, /help.",
+        text: "Shortcuts: PgUp/PgDn scroll, Esc menu, /tools, /clear, /menu, /help, /diagnostics.",
       });
       setStatus("Displayed help");
+      return;
+    }
+
+    if (userText === "/diagnostics") {
+      void runDiagnostics();
       return;
     }
 
@@ -243,31 +320,63 @@ export function JihnApp(props: JihnAppProps) {
     pushTranscript({ kind: "user", text: userText });
 
     try {
-      const systemPrompt = await props.resolveSystemPrompt();
-      const result = await handleMessage({
-        client: props.client,
-        model: props.model,
-        tools: props.tools,
+      const routed = resolveAgentRoute({
         text: userText,
-        routing: {
-          ...(props.agentId !== undefined ? { agentId: props.agentId } : {}),
-          ...(props.scope !== undefined ? { scope: props.scope } : {}),
-          channelId: props.channelId ?? "cli",
-          peerId: activePeerId,
-        },
-        ...(props.sessionStore !== undefined
-          ? { sessionStore: props.sessionStore }
-          : {}),
-        systemPrompt,
-        maxTurns: props.maxTurns,
-        maxTokens: props.maxTokens,
-        executeTool: async (name, input) => {
-          pushTranscript({ kind: "tool", text: `🔧 ${name}: ${JSON.stringify(input)}` });
-          const toolOutput = await props.executeTool(name, input);
-          pushTranscript({ kind: "tool", text: `→ ${toolOutput}` });
-          return toolOutput;
-        },
+        defaultAgentId: props.agentId ?? "main",
       });
+      if (routed.text.trim().length === 0) {
+        throw new Error("message text is empty after routing directive");
+      }
+
+      const result =
+        props.runGatewayTurn !== undefined
+          ? await props.runGatewayTurn({
+              text: routed.text,
+              agentId: routed.agentId,
+              scope: props.scope,
+              channelId: props.channelId ?? "cli",
+              peerId: activePeerId,
+            })
+          : await (async () => {
+              const systemPrompt = await props.resolveSystemPrompt(routed.agentId);
+              return await handleMessage({
+                client: props.client,
+                model: props.model,
+                tools: props.tools,
+                text: routed.text,
+                routing: {
+                  agentId: routed.agentId,
+                  ...(props.scope !== undefined ? { scope: props.scope } : {}),
+                  channelId: props.channelId ?? "cli",
+                  peerId: activePeerId,
+                },
+                ...(props.sessionStore !== undefined
+                  ? { sessionStore: props.sessionStore }
+                  : {}),
+                ...(props.toolPolicy !== undefined ? { toolPolicy: props.toolPolicy } : {}),
+                ...(props.sessionCompaction !== undefined
+                  ? { sessionCompaction: props.sessionCompaction }
+                  : {}),
+                ...(props.idempotencyStore !== undefined
+                  ? { idempotencyStore: props.idempotencyStore }
+                  : {}),
+                ...(props.lockManager !== undefined
+                  ? { lockManager: props.lockManager }
+                  : {}),
+                ...(props.pluginRuntime !== undefined
+                  ? { pluginRuntime: props.pluginRuntime }
+                  : {}),
+                systemPrompt,
+                maxTurns: props.maxTurns,
+                maxTokens: props.maxTokens,
+                executeTool: async (name, input) => {
+                  pushTranscript({ kind: "tool", text: `🔧 ${name}: ${JSON.stringify(input)}` });
+                  const toolOutput = await props.executeTool(name, input);
+                  pushTranscript({ kind: "tool", text: `→ ${toolOutput}` });
+                  return toolOutput;
+                },
+              });
+            })();
 
       setMessages(result.messages);
       setTurnCount((prev) => prev + 1);

@@ -1,10 +1,25 @@
-import { CalculateTool } from "../custom_tools/calculate.tool.js";
-import { CurrentTimeTool } from "../custom_tools/current_time.tool.js";
-import ToolRegistry from "../tools/registry.js";
+import { createSharedToolRuntime, type ToolDefinition } from "@jihn/agent-core";
 
-export function createToolRegistry(): ToolRegistry {
-  const registry = new ToolRegistry();
-  registry.register(CurrentTimeTool);
-  registry.register(CalculateTool);
-  return registry;
+interface ToolRegistryLike {
+  getDefinitions(): ToolDefinition[];
+  execute<ToolOutput = unknown>(name: string, rawInput: unknown): Promise<ToolOutput>;
+}
+
+export function createToolRegistry(): ToolRegistryLike {
+  const runtime = createSharedToolRuntime();
+  return {
+    getDefinitions(): ToolDefinition[] {
+      return runtime.definitions;
+    },
+    async execute<ToolOutput = unknown>(
+      name: string,
+      rawInput: unknown,
+    ): Promise<ToolOutput> {
+      const normalizedInput =
+        typeof rawInput === "object" && rawInput !== null && !Array.isArray(rawInput)
+          ? (rawInput as Record<string, unknown>)
+          : {};
+      return (await runtime.execute(name, normalizedInput)) as ToolOutput;
+    },
+  };
 }

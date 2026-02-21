@@ -10,6 +10,7 @@
     "dev": "tsx --env-file=.env --watch src/index.ts",
     "anthropic:sample": "tsx --env-file=.env src/examples/anthropic-samples.ts",
     "test": "npm run build && NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs",
+    "test:behaviors": "npm run build && NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs tests/agent-loop.test.js tests/tools.test.js tests/tool-registry.test.js",
     "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs --watch",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
@@ -20,6 +21,7 @@
   "description": "",
   "dependencies": {
     "@jihn/agent-core": "file:../../packages/agent-core",
+    "@jihn/gateway-client": "file:../../packages/gateway-client",
     "@anthropic-ai/sdk": "^0.74.0",
     "@types/react": "^19.2.14",
     "dotenv": "^17.3.1",

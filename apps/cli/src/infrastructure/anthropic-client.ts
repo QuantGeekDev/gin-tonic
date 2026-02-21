@@ -2,9 +2,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { readFile } from "node:fs/promises";
 import type { MessageCreateParamsNonStreaming } from "@anthropic-ai/sdk/resources/messages/messages";
 import {
+  createAnthropicClient as createSharedAnthropicClient,
   DEFAULT_ANTHROPIC_MODEL,
   type AnthropicModel,
-} from "../providers/anthropic/config.js";
+} from "@jihn/agent-core";
 
 type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
@@ -21,11 +22,7 @@ export interface AnthropicVisionRequest extends AnthropicTextRequest {
 }
 
 export function createAnthropicClient(apiKey = process.env.ANTHROPIC_API_KEY): Anthropic {
-  if (apiKey === undefined || apiKey.trim().length === 0) {
-    throw new Error("ANTHROPIC_API_KEY is required to call Anthropic.");
-  }
-
-  return new Anthropic({ apiKey });
+  return createSharedAnthropicClient(apiKey);
 }
 
 function extractTextContent(message: Anthropic.Message): string {

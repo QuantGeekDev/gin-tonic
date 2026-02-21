@@ -6,14 +6,16 @@ describe("runAgentTurn", () => {
   it("returns assistant text on end_turn", async () => {
     const calls = [];
     const client = {
-      messages: {
-        async create(request) {
-          calls.push(request);
-          return {
-            stop_reason: "end_turn",
-            content: [{ type: "text", text: "hello" }],
-          };
-        },
+      async createTurn(request) {
+        calls.push(request);
+        return {
+          stopReason: "end_turn",
+          content: [{ type: "text", text: "hello" }],
+          usage: {
+            inputTokens: 0,
+            outputTokens: 0,
+          },
+        };
       },
     };
 
@@ -28,7 +30,7 @@ describe("runAgentTurn", () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].max_tokens).toBe(1024);
+    expect(calls[0].maxTokens).toBe(1024);
     expect(result.text).toBe("hello");
     expect(result.messages[result.messages.length - 1]).toMatchObject({
       role: "assistant",
@@ -39,14 +41,16 @@ describe("runAgentTurn", () => {
   it("uses configurable maxTokens when provided", async () => {
     const calls = [];
     const client = {
-      messages: {
-        async create(request) {
-          calls.push(request);
-          return {
-            stop_reason: "end_turn",
-            content: [{ type: "text", text: "ok" }],
-          };
-        },
+      async createTurn(request) {
+        calls.push(request);
+        return {
+          stopReason: "end_turn",
+          content: [{ type: "text", text: "ok" }],
+          usage: {
+            inputTokens: 0,
+            outputTokens: 0,
+          },
+        };
       },
     };
 
@@ -62,33 +66,39 @@ describe("runAgentTurn", () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].max_tokens).toBe(2048);
+    expect(calls[0].maxTokens).toBe(2048);
   });
 
   it("executes tool_use blocks and continues loop", async () => {
     let createCount = 0;
     const client = {
-      messages: {
-        async create() {
-          createCount += 1;
-          if (createCount === 1) {
-            return {
-              stop_reason: "tool_use",
-              content: [
-                {
-                  type: "tool_use",
-                  id: "toolu_1",
-                  name: "calculate",
-                  input: { expression: "2 + 3" },
-                },
-              ],
-            };
-          }
+      async createTurn() {
+        createCount += 1;
+        if (createCount === 1) {
           return {
-            stop_reason: "end_turn",
-            content: [{ type: "text", text: "5" }],
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu_1",
+                name: "calculate",
+                input: { expression: "2 + 3" },
+              },
+            ],
+            usage: {
+              inputTokens: 0,
+              outputTokens: 0,
+            },
           };
-        },
+        }
+        return {
+          stopReason: "end_turn",
+          content: [{ type: "text", text: "5" }],
+          usage: {
+            inputTokens: 0,
+            outputTokens: 0,
+          },
+        };
       },
     };
 
@@ -117,20 +127,22 @@ describe("runAgentTurn", () => {
 
   it("returns max-tool-turn message when limit is reached", async () => {
     const client = {
-      messages: {
-        async create() {
-          return {
-            stop_reason: "tool_use",
-            content: [
-              {
-                type: "tool_use",
-                id: "toolu_1",
-                name: "calculate",
-                input: { expression: "1 + 1" },
-              },
-            ],
-          };
-        },
+      async createTurn() {
+        return {
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "calculate",
+              input: { expression: "1 + 1" },
+            },
+          ],
+          usage: {
+            inputTokens: 0,
+            outputTokens: 0,
+          },
+        };
       },
     };
 
