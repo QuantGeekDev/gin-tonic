@@ -27,6 +27,8 @@ Optional:
 - `JIHN_TELEGRAM_MAX_TURNS=20`
 - `JIHN_TELEGRAM_MAX_TOKENS=1024`
 - `JIHN_TELEGRAM_REPLY_TO_INCOMING=true`
+- `JIHN_TELEGRAM_TYPING_ENABLED=true|false` (default `true`)
+- `JIHN_TELEGRAM_TYPING_INTERVAL_MS=4000` (1,000-10,000)
 - `JIHN_TELEGRAM_ALLOWED_CHAT_IDS=123456,-987654`
 - `JIHN_TELEGRAM_TRANSPORT=polling|webhook` (default `polling`)
 - `JIHN_TELEGRAM_WEBHOOK_PUBLIC_BASE_URL=https://bot.example.com` (required for webhook)
@@ -36,6 +38,11 @@ Optional:
 - `JIHN_TELEGRAM_WEBHOOK_PORT=8787`
 - `JIHN_TELEGRAM_OUTBOUND_MAX_ATTEMPTS=4`
 - `JIHN_TELEGRAM_OUTBOUND_BASE_DELAY_MS=250`
+- `JIHN_TELEGRAM_OUTBOX_BACKEND=memory|postgres` (default `memory`)
+- `JIHN_TELEGRAM_METRICS_ENABLED=true|false` (default `false`)
+- `JIHN_TELEGRAM_METRICS_HOST=127.0.0.1`
+- `JIHN_TELEGRAM_METRICS_PORT=18792`
+- `JIHN_TELEGRAM_METRICS_PATH=/metrics`
 - `JIHN_TELEGRAM_DEBUG_FILE=.jihn/telegram-debug.json`
 - `JIHN_TELEGRAM_DEBUG_MAX_EVENTS=120`
 - `JIHN_CHANNEL_AUTH_MODE=off|open|pairing` (default `off`)
@@ -51,6 +58,9 @@ Pairing auth commands:
 - `/verify new` to rotate challenge
 
 Common shared runtime envs also apply (LLM, MCP, storage, policy, compaction, plugins).
+
+If `JIHN_TELEGRAM_OUTBOX_BACKEND=postgres`, set `DATABASE_URL` (or `JIHN_DATABASE_URL`) so
+outbound delivery is durable across adapter restarts.
 
 ## Run
 

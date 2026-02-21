@@ -9,6 +9,28 @@ export { composeSystemPrompt } from "./config/prompt-composer.js";
 export type { ComposeSystemPromptOptions } from "./config/prompt-composer.js";
 export { runAgentTurn } from "./agent/loop.js";
 export { handleMessage } from "./gateway/handle-message.js";
+export { InMemoryGatewayEventBus } from "./gateway/events-bus.js";
+export {
+  GatewayControlPlaneError,
+  GatewayControlPlaneService,
+} from "./gateway/control-plane.js";
+export { InMemoryLaneQueue } from "./gateway/queue/in-memory-lane-queue.js";
+export {
+  gatewayAckFrameSchema,
+  gatewayAuthSchema,
+  gatewayClientInfoSchema,
+  gatewayConnectFrameSchema,
+  gatewayErrorBodySchema,
+  gatewayErrorResponseFrameSchema,
+  gatewayEventFrameSchema,
+  gatewayInboundFrameSchema,
+  gatewayOutboundFrameSchema,
+  gatewayRequestFrameSchema,
+  gatewaySuccessResponseFrameSchema,
+  gatewayTransportErrorFrameSchema,
+  parseGatewayInboundFrame,
+  parseGatewayOutboundFrame,
+} from "./gateway/protocol/schema.js";
 export { resolveAgentRoute } from "./routing/router.js";
 export { parseMcpServersFromEnv } from "./mcp/config.js";
 export { McpToolRegistry, isMcpToolName } from "./mcp/registry.js";
@@ -62,6 +84,7 @@ export {
   LLM_STOP_REASONS,
 } from "./llm/types.js";
 export { createSharedToolRuntime } from "./runtime/tools.js";
+export { createDefaultWebSearchClient } from "./runtime/web-search.js";
 export {
   DEFAULT_GATEWAY_LOGGER,
   DEFAULT_IDEMPOTENCY_STORE,
@@ -94,10 +117,28 @@ export {
 export {
   createPluginRuntime,
   createPluginRuntimeFromLoaded,
+  DEFAULT_PLUGIN_HOST_VERSION,
+  DEFAULT_SUPPORTED_PLUGIN_API_VERSIONS,
+  isPluginPermissionError,
   loadWorkspacePlugins,
+  topologicalSortPlugins,
+  type LoadWorkspacePluginsOptions,
+  type PluginRuntimeOptions,
   PluginRuntime,
   validatePluginModuleForTests,
 } from "./plugins/runtime.js";
+export { InMemoryPluginEventSink } from "./plugins/events.js";
+export { InMemoryPluginStatusStore } from "./plugins/status-store.js";
+export { FilePluginStatusStore } from "./plugins/persistent-status-store.js";
+export { FilePluginEventSink } from "./plugins/persistent-event-sink.js";
+export { createPluginContext } from "./plugins/context.js";
+export type { PluginContextServices } from "./plugins/context.js";
+export { PluginWorkerHost } from "./plugins/isolation/worker-host.js";
+export {
+  PluginPermissionError,
+  hasPluginPermission,
+  requirePluginPermission,
+} from "./plugins/permissions.js";
 export {
   PLUGIN_MANIFEST_FILENAME,
   discoverPluginManifests,
@@ -116,6 +157,40 @@ export {
 } from "./tools/policy.js";
 export type { RunAgentTurnParams, RunAgentTurnResult } from "./types.js";
 export type {
+  GatewayConnectInput,
+  GatewayControlPlaneOptions,
+  GatewayMethodMap,
+  GatewayRequestContext,
+  GatewayClientSession,
+} from "./gateway/control-plane.js";
+export type {
+  GatewayEvent,
+  GatewayEventBusOptions,
+  GatewayEventSubscription,
+  SubscribeGatewayEventsOptions,
+} from "./gateway/events-bus.js";
+export type {
+  DeadLetterTask,
+  EnqueueLaneTaskOptions,
+  EnqueueLaneTaskResult,
+  LaneQueueOptions,
+  LaneQueueRetryPolicy,
+  LaneQueueSnapshot,
+  LaneQueueTaskSnapshot,
+  QueuePriority,
+} from "./gateway/queue/types.js";
+export type {
+  GatewayAckFrame,
+  GatewayConnectFrame,
+  GatewayErrorResponseFrame,
+  GatewayEventFrame,
+  GatewayInboundFrame,
+  GatewayOutboundFrame,
+  GatewayRequestFrame,
+  GatewaySuccessResponseFrame,
+  GatewayTransportErrorFrame,
+} from "./gateway/protocol/schema.js";
+export type {
   ChannelAuthDecision,
   ChannelAuthMode,
   ChannelAuthInboundInput,
@@ -128,11 +203,23 @@ export type {
   JihnPluginModule,
   LoadedPlugin,
   PluginCapability,
+  PluginContext,
+  PluginEvent,
+  PluginEventName,
+  PluginEventSink,
+  PluginFilesystemAccessor,
   PluginHookName,
   PluginLoadIssue,
   PluginLoadResult,
   PluginManifest,
+  PluginMemoryAccessor,
+  PluginNetworkAccessor,
+  PluginPermission,
   PluginRuntimeLogger,
+  PluginSessionAccessor,
+  PluginStatusSnapshot,
+  PluginStatusState,
+  PluginStatusStore,
   PluginToolDefinition,
 } from "./plugins/types.js";
 export type {
@@ -188,6 +275,13 @@ export type {
   BuildSharedToolRuntimeOptions,
   SharedToolRuntime,
 } from "./runtime/types.js";
+export type {
+  WebFetchInput,
+  WebFetchResultItem,
+  WebSearchClient,
+  WebSearchQueryInput,
+  WebSearchResultItem,
+} from "./runtime/web-search.js";
 export type {
   HandleMessageParams,
   HandleMessageResolvedRouting,

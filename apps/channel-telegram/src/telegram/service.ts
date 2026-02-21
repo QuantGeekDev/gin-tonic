@@ -15,6 +15,9 @@ import type { TelegramAgentRuntime } from "../runtime.js";
 import { toTelegramErrorText } from "../runtime.js";
 import { TelegramDebugStore } from "../debug-store.js";
 import { TelegramOutboundQueue } from "./outbound-queue.js";
+import { createOutboxStoreFromEnv } from "./outbox-store.js";
+import { TelegramPrometheusMetrics } from "./metrics.js";
+import { startTelegramTypingIndicator } from "./typing.js";
 
 const logger = createJihnLogger({ name: "jihn-channel-telegram" });
 
@@ -80,10 +83,83 @@ export function createTelegramChannelService(params: {
     filePath: config.debugFilePath,
     maxEvents: config.debugMaxEvents,
     transportMode: config.transportMode,
+    outboundBackend: config.outboundBackend,
   });
+  const outboxStore = createOutboxStoreFromEnv({
+    ...process.env,
+    JIHN_TELEGRAM_OUTBOX_BACKEND: config.outboundBackend,
+  });
+  const metrics = new TelegramPrometheusMetrics();
+  let metricsServer: Server | null = null;
+  const updateMetricsSnapshot = async (): Promise<void> => {
+    const snapshot = await outboundQueue.snapshot();
+    metrics.setSnapshot(snapshot);
+    await debugStore.setOutboundStats({
+      queueDepth: snapshot.queued,
+      processing: snapshot.processing,
+      retryDepth: snapshot.retry,
+      deadLetterDepth: snapshot.dead,
+    });
+    const deadLetters = await outboundQueue.deadLetters(1);
+    const oldest = deadLetters[0];
+    if (oldest === undefined) {
+      metrics.setDeadLetterOldestAgeSeconds(0);
+    } else {
+      metrics.setDeadLetterOldestAgeSeconds(Math.max(0, (Date.now() - oldest.createdAtMs) / 1000));
+    }
+  };
   const outboundQueue = new TelegramOutboundQueue({
     maxAttempts: config.outboundMaxAttempts,
     baseDelayMs: config.outboundBaseDelayMs,
+    store: outboxStore,
+    send: async (payload) => {
+      await sendTelegramReply({
+        api: bot.api,
+        chatId: payload.chatId,
+        text: payload.text,
+        options: payload.options,
+      });
+    },
+    onRetry: async (params) => {
+      await debugStore.increment("retries");
+      metrics.observeRetry({
+        failureCode: params.failure.code,
+        queueLatencyMs: params.queueLatencyMs,
+        processLatencyMs: params.processLatencyMs,
+      });
+      await debugStore.noteEvent({
+        timestamp: new Date().toISOString(),
+        level: "warn",
+        event: "outbound_retry",
+        detail: `record=${params.recordId} attempt=${params.attempt} delayMs=${params.delayMs} code=${params.failure.code} error=${params.failure.message}`,
+      });
+      await updateMetricsSnapshot();
+    },
+    onDeadLetter: async (params) => {
+      metrics.observeDeadLetter({
+        failureCode: params.failure.code,
+        queueLatencyMs: params.queueLatencyMs,
+        processLatencyMs: params.processLatencyMs,
+      });
+      await debugStore.noteEvent({
+        timestamp: new Date().toISOString(),
+        level: "error",
+        event: "outbound_dead_letter",
+        detail: `record=${params.recordId} attempts=${params.attempts} code=${params.failure.code} error=${params.failure.message}`,
+      });
+      await updateMetricsSnapshot();
+    },
+    onEnqueued: async (params) => {
+      metrics.observeEnqueue({ latencyMs: params.enqueueLatencyMs });
+      await updateMetricsSnapshot();
+    },
+    onSent: async (params) => {
+      metrics.observeSent({
+        queueLatencyMs: params.queueLatencyMs,
+        processLatencyMs: params.processLatencyMs,
+      });
+      await updateMetricsSnapshot();
+    },
   });
   let webhookServer: Server | null = null;
   const authMiddleware = new ChannelAuthPairingMiddleware({
@@ -152,21 +228,19 @@ export function createTelegramChannelService(params: {
         updateId: inbound.updateId,
         chatId: inbound.chatId,
       });
-      await debugStore.setQueueDepth(outboundQueue.size() + 1);
       await outboundQueue.enqueue({
-        run: async () => {
-          await sendTelegramReply({
-            api: bot.api,
-            chatId: inbound.chatId,
-            text: authDecision.responseText,
-            options: buildTelegramReplyOptions({
-              message: inbound,
-              replyToIncomingByDefault: true,
-            }),
-          });
+        accountKey: `chat:${inbound.chatId}`,
+        payload: {
+          chatId: inbound.chatId,
+          text: authDecision.responseText,
+          options: buildTelegramReplyOptions({
+            message: inbound,
+            replyToIncomingByDefault: true,
+          }),
+          updateId: inbound.updateId,
         },
       });
-      await debugStore.setQueueDepth(outboundQueue.size());
+      await updateMetricsSnapshot();
       return;
     }
     await debugStore.increment("received");
@@ -189,39 +263,43 @@ export function createTelegramChannelService(params: {
     );
 
     try {
+      const typing =
+        config.typingIndicatorEnabled
+          ? startTelegramTypingIndicator({
+              api: bot.api,
+              chatId: inbound.chatId,
+              ...(inbound.messageThreadId !== undefined
+                ? { messageThreadId: inbound.messageThreadId }
+                : {}),
+              intervalMs: config.typingIntervalMs,
+            })
+          : null;
       const turnInput = buildTelegramTurnInput({
         message: inbound,
         agentId: config.agentId,
         sessionScope: config.sessionScope,
       });
-      const result = await runtime.runTurn(turnInput);
+      const result = await (async () => {
+        try {
+          return await runtime.runTurn(turnInput);
+        } finally {
+          typing?.stop();
+        }
+      })();
 
-      await debugStore.setQueueDepth(outboundQueue.size() + 1);
       await outboundQueue.enqueue({
-        run: async () => {
-          await sendTelegramReply({
-            api: bot.api,
-            chatId: inbound.chatId,
-            text: result.text,
-            options: buildTelegramReplyOptions({
-              message: inbound,
-              replyToIncomingByDefault: config.replyToIncomingByDefault,
-            }),
-          });
-        },
-        onRetry: async (attempt, delayMs, error) => {
-          await debugStore.increment("retries");
-          await debugStore.noteEvent({
-            timestamp: new Date().toISOString(),
-            level: "warn",
-            event: "outbound_retry",
-            updateId: inbound.updateId,
-            chatId: inbound.chatId,
-            detail: `attempt=${attempt} delayMs=${delayMs} error=${error instanceof Error ? error.message : String(error)}`,
-          });
+        accountKey: `chat:${inbound.chatId}`,
+        payload: {
+          chatId: inbound.chatId,
+          text: result.text,
+          options: buildTelegramReplyOptions({
+            message: inbound,
+            replyToIncomingByDefault: config.replyToIncomingByDefault,
+          }),
+          updateId: inbound.updateId,
         },
       });
-      await debugStore.setQueueDepth(outboundQueue.size());
+      await updateMetricsSnapshot();
       await debugStore.increment("replied");
       await debugStore.noteEvent({
         timestamp: new Date().toISOString(),
@@ -257,21 +335,19 @@ export function createTelegramChannelService(params: {
         },
         "telegram.turn.failed",
       );
-      await debugStore.setQueueDepth(outboundQueue.size() + 1);
       await outboundQueue.enqueue({
-        run: async () => {
-          await sendTelegramReply({
-            api: bot.api,
-            chatId: inbound.chatId,
-            text: `Request failed: ${errorText}`,
-            options: buildTelegramReplyOptions({
-              message: inbound,
-              replyToIncomingByDefault: true,
-            }),
-          });
+        accountKey: `chat:${inbound.chatId}`,
+        payload: {
+          chatId: inbound.chatId,
+          text: `Request failed: ${errorText}`,
+          options: buildTelegramReplyOptions({
+            message: inbound,
+            replyToIncomingByDefault: true,
+          }),
+          updateId: inbound.updateId,
         },
       });
-      await debugStore.setQueueDepth(outboundQueue.size());
+      await updateMetricsSnapshot();
     }
   });
 
@@ -287,6 +363,36 @@ export function createTelegramChannelService(params: {
         "telegram.start",
       );
       await debugStore.noteStart();
+      await outboundQueue.start();
+      await updateMetricsSnapshot();
+      if (config.metricsEnabled) {
+        metricsServer = createServer((req, res) => {
+          if (!req.url || !req.url.startsWith(config.metricsPath)) {
+            res.statusCode = 404;
+            res.end("Not Found");
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader("content-type", "text/plain; version=0.0.4");
+          void metrics.render().then((body) => {
+            res.end(body);
+          });
+        });
+        await new Promise<void>((resolve, reject) => {
+          const server = metricsServer as Server;
+          server.once("error", reject);
+          server.listen(config.metricsPort, config.metricsHost, () => {
+            server.removeListener("error", reject);
+            resolve();
+          });
+        });
+        await debugStore.noteEvent({
+          timestamp: new Date().toISOString(),
+          level: "info",
+          event: "metrics_ready",
+          detail: `${config.metricsHost}:${config.metricsPort}${config.metricsPath}`,
+        });
+      }
       await debugStore.noteEvent({
         timestamp: new Date().toISOString(),
         level: "info",
@@ -342,6 +448,20 @@ export function createTelegramChannelService(params: {
         await bot.api.deleteWebhook();
       }
       bot.stop();
+      await outboundQueue.stop();
+      await outboxStore.close();
+      if (metricsServer !== null) {
+        await new Promise<void>((resolve, reject) => {
+          metricsServer?.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        });
+        metricsServer = null;
+      }
       if (webhookServer !== null) {
         await new Promise<void>((resolve, reject) => {
           webhookServer?.close((error) => {

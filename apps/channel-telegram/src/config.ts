@@ -17,6 +17,7 @@ const EnvBooleanSchema = z.preprocess((value) => {
   }
   return value;
 }, z.boolean());
+const MetricsPathSchema = z.string().trim().min(1).default("/metrics");
 
 const TelegramChannelConfigSchema = z.object({
   telegramBotToken: z.string().trim().min(1, "JIHN_TELEGRAM_BOT_TOKEN is required"),
@@ -31,11 +32,18 @@ const TelegramChannelConfigSchema = z.object({
   maxTurns: z.coerce.number().int().positive().default(20),
   maxTokens: z.coerce.number().int().positive().default(1024),
   replyToIncomingByDefault: EnvBooleanSchema.default(true),
+  typingIndicatorEnabled: EnvBooleanSchema.default(true),
+  typingIntervalMs: z.coerce.number().int().min(1_000).max(10_000).default(4_000),
   outboundMaxAttempts: z.coerce.number().int().min(1).max(10).default(4),
   outboundBaseDelayMs: z.coerce.number().int().min(10).max(60_000).default(250),
+  outboundBackend: z.enum(["memory", "postgres"] as const).default("memory"),
   allowedChatIds: z.string().optional(),
   debugFilePath: z.string().trim().min(1).default(`${process.cwd()}/.jihn/telegram-debug.json`),
   debugMaxEvents: z.coerce.number().int().min(10).max(500).default(120),
+  metricsEnabled: EnvBooleanSchema.default(false),
+  metricsHost: z.string().trim().min(1).default("127.0.0.1"),
+  metricsPort: z.coerce.number().int().positive().default(18792),
+  metricsPath: MetricsPathSchema,
   authMode: ChannelAuthModeSchema.default("off"),
   authStoreFilePath: z
     .string()
@@ -61,11 +69,18 @@ export interface TelegramChannelConfig {
   maxTurns: number;
   maxTokens: number;
   replyToIncomingByDefault: boolean;
+  typingIndicatorEnabled: boolean;
+  typingIntervalMs: number;
   outboundMaxAttempts: number;
   outboundBaseDelayMs: number;
+  outboundBackend: "memory" | "postgres";
   allowedChatIds: Set<number> | null;
   debugFilePath: string;
   debugMaxEvents: number;
+  metricsEnabled: boolean;
+  metricsHost: string;
+  metricsPort: number;
+  metricsPath: string;
   authMode: ChannelAuthMode;
   authStoreFilePath: string;
   authHashSecret: string | null;
@@ -106,11 +121,18 @@ export function loadTelegramChannelConfig(
     maxTurns: env.JIHN_TELEGRAM_MAX_TURNS,
     maxTokens: env.JIHN_TELEGRAM_MAX_TOKENS,
     replyToIncomingByDefault: env.JIHN_TELEGRAM_REPLY_TO_INCOMING,
+    typingIndicatorEnabled: env.JIHN_TELEGRAM_TYPING_ENABLED,
+    typingIntervalMs: env.JIHN_TELEGRAM_TYPING_INTERVAL_MS,
     outboundMaxAttempts: env.JIHN_TELEGRAM_OUTBOUND_MAX_ATTEMPTS,
     outboundBaseDelayMs: env.JIHN_TELEGRAM_OUTBOUND_BASE_DELAY_MS,
+    outboundBackend: env.JIHN_TELEGRAM_OUTBOX_BACKEND,
     allowedChatIds: env.JIHN_TELEGRAM_ALLOWED_CHAT_IDS,
     debugFilePath: env.JIHN_TELEGRAM_DEBUG_FILE,
     debugMaxEvents: env.JIHN_TELEGRAM_DEBUG_MAX_EVENTS,
+    metricsEnabled: env.JIHN_TELEGRAM_METRICS_ENABLED,
+    metricsHost: env.JIHN_TELEGRAM_METRICS_HOST,
+    metricsPort: env.JIHN_TELEGRAM_METRICS_PORT,
+    metricsPath: env.JIHN_TELEGRAM_METRICS_PATH,
     authMode: env.JIHN_CHANNEL_AUTH_MODE,
     authStoreFilePath: env.JIHN_CHANNEL_AUTH_STORE_FILE,
     authHashSecret: env.JIHN_CHANNEL_AUTH_SECRET,
@@ -138,11 +160,18 @@ export function loadTelegramChannelConfig(
     maxTurns: parsed.maxTurns,
     maxTokens: parsed.maxTokens,
     replyToIncomingByDefault: parsed.replyToIncomingByDefault,
+    typingIndicatorEnabled: parsed.typingIndicatorEnabled,
+    typingIntervalMs: parsed.typingIntervalMs,
     outboundMaxAttempts: parsed.outboundMaxAttempts,
     outboundBaseDelayMs: parsed.outboundBaseDelayMs,
+    outboundBackend: parsed.outboundBackend,
     allowedChatIds: parseAllowedChatIds(parsed.allowedChatIds),
     debugFilePath: parsed.debugFilePath,
     debugMaxEvents: parsed.debugMaxEvents,
+    metricsEnabled: parsed.metricsEnabled,
+    metricsHost: parsed.metricsHost,
+    metricsPort: parsed.metricsPort,
+    metricsPath: parsed.metricsPath.startsWith("/") ? parsed.metricsPath : `/${parsed.metricsPath}`,
     authMode: parsed.authMode,
     authStoreFilePath: parsed.authStoreFilePath,
     authHashSecret: parsed.authHashSecret ?? null,
