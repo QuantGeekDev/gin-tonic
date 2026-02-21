@@ -12,9 +12,15 @@
   },
   "dependencies": {
     "@jihn/agent-core": "file:../../packages/agent-core",
+    "@jihn/gateway-client": "file:../../packages/gateway-client",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "next": "16.1.6",
+    "next-themes": "^0.4.6",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "tailwind-merge": "^3.4.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

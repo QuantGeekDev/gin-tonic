@@ -1,211 +1,174 @@
 import { NextResponse } from "next/server";
+import type { AgentTurnRequest } from "./types";
 import {
-  composeSystemPrompt,
-  DEFAULT_MAX_TOKENS,
-  DEFAULT_MAX_TURNS,
-  handleMessage,
-  SESSION_SCOPES,
-  SessionStore,
-} from "@jihn/agent-core";
-import { createAnthropicClient } from "@cli/infrastructure/anthropic-client";
-import { createToolRegistry } from "@cli/infrastructure/register-tools";
-import { resolveAnthropicModel } from "@cli/providers/anthropic/config";
-import type { SessionScope } from "@jihn/agent-core";
+  parseAgentTurnRequestBody,
+  RequestValidationError,
+} from "./validation";
+import { createRequestLogger, generateRequestId } from "../logger";
+import {
+  enforceRequestPolicy,
+  mapPolicyError,
+  REQUEST_SCOPES,
+} from "../shared-runtime";
+import { apiError, apiSuccess } from "../response";
+import { getGatewayClient } from "../gateway-client";
 
 export const runtime = "nodejs";
-const sessionStore = new SessionStore();
 
-interface AgentTurnRequest {
-  text: string;
-  peerId: string;
-  scope?: SessionScope;
-  channelId?: string;
-  agentId?: string;
-  maxTurns?: number;
-  maxTokens?: number;
-}
+export async function GET(request: Request): Promise<NextResponse> {
+  const requestId = generateRequestId();
+  const logger = createRequestLogger("/api/agent:GET", requestId);
+  try {
+    enforceRequestPolicy({
+      request,
+      requiredScopes: [REQUEST_SCOPES.AGENT_READ],
+    });
 
-export async function GET(): Promise<NextResponse> {
-  const registry = createToolRegistry();
-  const model = resolveAnthropicModel(process.env.ANTHROPIC_MODEL);
+    const gateway = await getGatewayClient();
+    const meta = await gateway.request<{
+      provider: string;
+      model: string;
+      tools: Array<{ name: string; description: string }>;
+    }>("runtime.meta", {});
 
-  return NextResponse.json({
-    model,
-    tools: registry.getDefinitions().map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-    })),
-  });
+    logger.info({ toolCount: meta.tools.length }, "request.complete");
+    return apiSuccess(requestId, meta);
+  } catch (error) {
+    const policy = mapPolicyError(error);
+    if (policy !== null) {
+      const errorObject = policy.body.error as {
+        code?: string;
+        message?: string;
+        details?: unknown;
+      };
+      return apiError(
+        requestId,
+        {
+          code: errorObject.code ?? "POLICY_ERROR",
+          message: errorObject.message ?? "request blocked by policy",
+          ...(errorObject.details !== undefined ? { details: errorObject.details } : {}),
+        },
+        policy.statusCode,
+      );
+    }
+
+    logger.error({ error }, "request.error");
+    return apiError(
+      requestId,
+      {
+        code: "INTERNAL_ERROR",
+        message: "request failed",
+      },
+      500,
+    );
+  }
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const requestId = generateRequestId();
+  const logger = createRequestLogger("/api/agent:POST", requestId);
   try {
-    const rawBody = (await request.json()) as unknown;
-    if (typeof rawBody !== "object" || rawBody === null || Array.isArray(rawBody)) {
-      return NextResponse.json(
-        {
-          error: "request body must be a JSON object",
-        },
-        { status: 400 },
-      );
-    }
-
-    const body = rawBody as Record<string, unknown>;
-    if ("input" in body || "messages" in body) {
-      return NextResponse.json(
-        {
-          error: "legacy fields are not supported; use only text + peerId + optional routing fields",
-        },
-        { status: 400 },
-      );
-    }
-
-    const allowedKeys = new Set([
-      "text",
-      "peerId",
-      "scope",
-      "channelId",
-      "agentId",
-      "maxTurns",
-      "maxTokens",
-    ]);
-    const unsupportedKeys = Object.keys(body).filter((key) => !allowedKeys.has(key));
-    if (unsupportedKeys.length > 0) {
-      return NextResponse.json(
-        {
-          error: `unsupported field(s): ${unsupportedKeys.join(", ")}`,
-        },
-        { status: 400 },
-      );
-    }
-
-    if (typeof body.text !== "string" || body.text.trim().length === 0) {
-      return NextResponse.json(
-        {
-          error: "text must be a non-empty string",
-        },
-        { status: 400 },
-      );
-    }
-    if (typeof body.peerId !== "string" || body.peerId.trim().length === 0) {
-      return NextResponse.json(
-        {
-          error: "peerId must be a non-empty string",
-        },
-        { status: 400 },
-      );
-    }
-    if (body.scope !== undefined && !SESSION_SCOPES.includes(body.scope as SessionScope)) {
-      return NextResponse.json(
-        {
-          error: `scope must be one of: ${SESSION_SCOPES.join(", ")}`,
-        },
-        { status: 400 },
-      );
-    }
-    if (body.channelId !== undefined && typeof body.channelId !== "string") {
-      return NextResponse.json(
-        {
-          error: "channelId must be a string when provided",
-        },
-        { status: 400 },
-      );
-    }
-    if (body.agentId !== undefined && typeof body.agentId !== "string") {
-      return NextResponse.json(
-        {
-          error: "agentId must be a string when provided",
-        },
-        { status: 400 },
-      );
-    }
-    if (
-      body.maxTurns !== undefined &&
-      (typeof body.maxTurns !== "number" || !Number.isInteger(body.maxTurns) || body.maxTurns <= 0)
-    ) {
-      return NextResponse.json(
-        {
-          error: "maxTurns must be a positive integer when provided",
-        },
-        { status: 400 },
-      );
-    }
-    if (
-      body.maxTokens !== undefined &&
-      (typeof body.maxTokens !== "number" || !Number.isInteger(body.maxTokens) || body.maxTokens <= 0)
-    ) {
-      return NextResponse.json(
-        {
-          error: "maxTokens must be a positive integer when provided",
-        },
-        { status: 400 },
-      );
-    }
-
-    const typedBody: AgentTurnRequest = {
-      text: body.text as string,
-      peerId: body.peerId as string,
-      ...(body.scope !== undefined ? { scope: body.scope as SessionScope } : {}),
-      ...(body.channelId !== undefined ? { channelId: body.channelId as string } : {}),
-      ...(body.agentId !== undefined ? { agentId: body.agentId as string } : {}),
-      ...(body.maxTurns !== undefined ? { maxTurns: body.maxTurns as number } : {}),
-      ...(body.maxTokens !== undefined ? { maxTokens: body.maxTokens as number } : {}),
-    };
-    const client = createAnthropicClient();
-    const model = resolveAnthropicModel(process.env.ANTHROPIC_MODEL);
-    const registry = createToolRegistry();
-    const userInput = typedBody.text.trim();
-    const peerId = typedBody.peerId.trim();
-    const effectiveAgentId = typedBody.agentId?.trim() || "main";
-    const systemPrompt = await composeSystemPrompt({
-      workspaceDir: process.cwd(),
-      agentId: effectiveAgentId,
+    enforceRequestPolicy({
+      request,
+      requiredScopes: [REQUEST_SCOPES.AGENT_WRITE],
     });
 
-    const toolEvents: Array<
-      | { kind: "call"; name: string; input: Record<string, unknown> }
-      | { kind: "result"; name: string; output: string }
-    > = [];
+    const typedBody: AgentTurnRequest = parseAgentTurnRequestBody(
+      (await request.json()) as unknown,
+    );
 
-    const result = await handleMessage({
-      client,
-      model,
-      tools: registry.getDefinitions(),
-      text: userInput,
+    const gateway = await getGatewayClient();
+    const headerIdempotencyKey = request.headers.get("Idempotency-Key")?.trim();
+    const effectiveIdempotencyKey =
+      headerIdempotencyKey && headerIdempotencyKey.length > 0
+        ? headerIdempotencyKey
+        : typedBody.idempotencyKey;
+
+    const result = await gateway.request<{
+      text: string;
+      messages: unknown[];
+      usage: {
+        estimatedInputTokens: number;
+        inputTokens: number;
+        outputTokens: number;
+      };
       routing: {
-        agentId: effectiveAgentId,
-        scope: typedBody.scope,
-        channelId: typedBody.channelId ?? "web",
-        peerId,
+        agentId: string;
+        scope: string;
+        channelId: string;
+        peerId: string;
+        sessionKey: string;
+      };
+      persistenceMode: "append" | "save";
+      compaction?: unknown;
+      idempotencyHit?: boolean;
+    }>(
+      "agent.run",
+      {
+        text: typedBody.text,
+        routing: {
+          ...(typedBody.agentId ? { agentId: typedBody.agentId } : {}),
+          ...(typedBody.scope ? { scope: typedBody.scope } : {}),
+          ...(typedBody.channelId ? { channelId: typedBody.channelId } : {}),
+          peerId: typedBody.peerId,
+        },
       },
-      sessionStore,
-      systemPrompt,
-      maxTurns: typedBody.maxTurns ?? DEFAULT_MAX_TURNS,
-      maxTokens: typedBody.maxTokens ?? DEFAULT_MAX_TOKENS,
-      async executeTool(name, input) {
-        toolEvents.push({ kind: "call", name, input });
-        const output = await registry.execute<string>(name, input);
-        toolEvents.push({ kind: "result", name, output });
-        return output;
-      },
-    });
+      effectiveIdempotencyKey !== undefined
+        ? { idempotencyKey: effectiveIdempotencyKey }
+        : {},
+    );
 
-    return NextResponse.json({
+    return apiSuccess(requestId, {
       text: result.text,
       messages: result.messages,
       usage: result.usage,
-      toolEvents,
-      model,
+      toolEvents: [],
+      provider: "gateway",
+      model: "gateway",
       session: result.routing,
       persistenceMode: result.persistenceMode,
+      compaction: result.compaction ?? null,
+      idempotencyHit: result.idempotencyHit ?? false,
     });
   } catch (error) {
+    const policy = mapPolicyError(error);
+    if (policy !== null) {
+      const errorObject = policy.body.error as {
+        code?: string;
+        message?: string;
+        details?: unknown;
+      };
+      return apiError(
+        requestId,
+        {
+          code: errorObject.code ?? "POLICY_ERROR",
+          message: errorObject.message ?? "request blocked by policy",
+          ...(errorObject.details !== undefined ? { details: errorObject.details } : {}),
+        },
+        policy.statusCode,
+      );
+    }
+
+    if (error instanceof RequestValidationError) {
+      return apiError(
+        requestId,
+        {
+          code: "VALIDATION_ERROR",
+          message: error.message,
+        },
+        error.statusCode,
+      );
+    }
+
     const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json(
+    logger.error({ error }, "request.error");
+    return apiError(
+      requestId,
       {
-        error: message,
+        code: "INTERNAL_ERROR",
+        message,
       },
-      { status: 500 },
+      500,
     );
   }
 }

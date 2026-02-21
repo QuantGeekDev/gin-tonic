@@ -8,6 +8,7 @@ import { apiError, apiSuccess } from "../response";
 const TelegramDebugSnapshotSchema = z.object({
   generatedAt: z.string(),
   transportMode: z.enum(["polling", "webhook"]),
+  outboundBackend: z.enum(["memory", "postgres"]),
   running: z.boolean(),
   startedAt: z.string().optional(),
   stoppedAt: z.string().optional(),
@@ -21,6 +22,9 @@ const TelegramDebugSnapshotSchema = z.object({
   }),
   outbound: z.object({
     queueDepth: z.number(),
+    processing: z.number(),
+    retryDepth: z.number(),
+    deadLetterDepth: z.number(),
   }),
   recentEvents: z.array(
     z.object({
