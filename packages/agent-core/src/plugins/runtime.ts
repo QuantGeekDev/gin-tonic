@@ -79,6 +79,7 @@ export interface LoadWorkspacePluginsOptions {
   hostVersion?: string;
   supportedApiVersions?: number[];
   isolationPolicy?: PluginIsolationPolicy;
+  eventSink?: PluginEventSink;
 }
 
 interface PluginDefinitionShape {
@@ -948,6 +949,7 @@ export async function loadWorkspacePlugins(
   const supportedApiVersions =
     options.supportedApiVersions ?? [...DEFAULT_SUPPORTED_PLUGIN_API_VERSIONS];
   const isolationPolicy = options.isolationPolicy ?? DEFAULT_ISOLATION_POLICY;
+  const eventSink = options.eventSink;
   const manifests = await discoverPluginManifests(options);
   const issues: PluginLoadIssue[] = [];
   const plugins: LoadedPlugin[] = [];
@@ -992,15 +994,40 @@ export async function loadWorkspacePlugins(
       });
 
       if (modeResolution.denied) {
+        const denyMessage = `policy denied: ${modeResolution.reasons.join("; ")}`;
         issues.push({
           pluginId,
           level: "error",
-          message: `policy denied: ${modeResolution.reasons.join("; ")}`,
+          message: denyMessage,
+        });
+        eventSink?.emit({
+          timestamp: nowIso(),
+          name: "plugin.policy.denied",
+          pluginId,
+          details: {
+            requestedMode: modeResolution.requestedMode,
+            effectiveMode: modeResolution.effectiveMode,
+            reasons: modeResolution.reasons,
+          },
+        });
+        logger.warn("plugin.policy.denied", {
+          pluginId,
+          message: denyMessage,
         });
         continue;
       }
 
       const effectiveMode = modeResolution.effectiveMode;
+      eventSink?.emit({
+        timestamp: nowIso(),
+        name: "plugin.policy.resolved",
+        pluginId,
+        details: {
+          effectiveMode,
+          requestedMode: modeResolution.requestedMode,
+          reasons: modeResolution.reasons,
+        },
+      });
 
       if (effectiveMode === "external_process" || effectiveMode === "container") {
         issues.push({
