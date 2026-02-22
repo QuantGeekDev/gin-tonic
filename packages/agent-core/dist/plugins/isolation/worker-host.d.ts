@@ -55,6 +55,12 @@ export declare class PluginWorkerHost {
      * request. Returns `undefined` if no context services are configured.
      */
     private buildContextMeta;
+    /**
+     * Build a minimal env for the worker thread. Only passes through essential
+     * Node.js runtime vars plus broker-scoped secrets. Prevents leakage of
+     * host process.env (API keys, database URLs, etc.) to plugin code.
+     */
+    private buildWorkerEnv;
     private nextId;
     private send;
 }

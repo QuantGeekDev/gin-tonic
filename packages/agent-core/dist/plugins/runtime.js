@@ -11,6 +11,7 @@ import { resolvePluginExecutionMode, DEFAULT_ISOLATION_POLICY, } from "./isolati
 const DEFAULT_HOOK_TIMEOUT_MS = 2_000;
 const DEFAULT_HOOK_ERROR_MODE = "continue";
 const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 5;
+const DEFAULT_GRANT_CLEANUP_INTERVAL_MS = 60_000; // 1 minute
 const DEFAULT_CIRCUIT_COOLDOWN_MS = 5 * 60_000;
 const DEFAULT_CIRCUIT_TIME_WINDOW_MS = 5 * 60_000;
 export const DEFAULT_PLUGIN_HOST_VERSION = "1.0.0";
@@ -249,6 +250,8 @@ export class PluginRuntime {
     statusStore;
     workerHosts = new Map();
     failureState = new Map();
+    secretBroker = null;
+    grantCleanupTimer = null;
     breakerThreshold;
     breakerCooldownMs;
     breakerWindowMs;
@@ -267,6 +270,14 @@ export class PluginRuntime {
         this.toolOwnerMap = new Map();
         this.pluginMap = new Map();
         this.contextMap = new Map();
+        // Secret broker lifecycle integration
+        if (options.secretBroker) {
+            this.secretBroker = options.secretBroker;
+            this.grantCleanupTimer = setInterval(() => {
+                options.secretBroker.cleanupExpired();
+            }, DEFAULT_GRANT_CLEANUP_INTERVAL_MS);
+            this.grantCleanupTimer.unref();
+        }
         const contextServices = options.contextServices ?? {};
         // Inject deny callback for audit events from capability enforcement
         const eventSinkRef = this.eventSink;
@@ -383,6 +394,8 @@ export class PluginRuntime {
             lastError: reason,
             lastUpdatedAt: nowIso(),
         });
+        // Revoke all active secret grants for this plugin immediately.
+        this.secretBroker?.revokePluginGrants(pluginId);
         if (entry?.plugin.lifecycle?.onDisable) {
             await Promise.resolve(entry.plugin.lifecycle.onDisable({
                 pluginId: entry.manifest.id,
@@ -561,7 +574,14 @@ export class PluginRuntime {
         this.workerHosts.set(pluginId, host);
     }
     async shutdown() {
+        // Stop the grant cleanup timer.
+        if (this.grantCleanupTimer) {
+            clearInterval(this.grantCleanupTimer);
+            this.grantCleanupTimer = null;
+        }
         for (const entry of this.plugins) {
+            // Revoke all active secret grants for each plugin on unload.
+            this.secretBroker?.revokePluginGrants(entry.manifest.id);
             const unload = entry.plugin.lifecycle?.onUnload;
             if (!unload) {
                 continue;

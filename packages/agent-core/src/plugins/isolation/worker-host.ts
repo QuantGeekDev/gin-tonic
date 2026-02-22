@@ -30,6 +30,18 @@ const workerRuntimePath = join(
   "worker-runtime.js",
 );
 
+/**
+ * Essential env vars that must be passed to worker threads for Node.js
+ * module resolution and basic runtime functionality.
+ */
+const WORKER_ENV_PASSTHROUGH_KEYS = [
+  "NODE_PATH",
+  "HOME",
+  "PATH",
+  "LANG",
+  "TZ",
+] as const;
+
 export class PluginWorkerHost {
   private worker: Worker | null = null;
   private readonly pendingRequests = new Map<
@@ -68,7 +80,9 @@ export class PluginWorkerHost {
   }
 
   public async start(entryPath: string): Promise<{ toolNames: string[]; hookNames: string[] }> {
-    this.worker = new Worker(workerRuntimePath);
+    this.worker = new Worker(workerRuntimePath, {
+      env: this.buildWorkerEnv(),
+    });
     this.worker.on("message", (message: WorkerToHostMessage) => {
       // Discriminate worker-initiated RPC requests from normal responses.
       if ("type" in message && message.type === "rpc_request") {
@@ -370,6 +384,30 @@ export class PluginWorkerHost {
       capabilityPolicy: this.contextServices.capabilityPolicy,
       secretsSnapshot: this.secretBroker?.buildPluginEnv(this.pluginId) ?? {},
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Env sanitization
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Build a minimal env for the worker thread. Only passes through essential
+   * Node.js runtime vars plus broker-scoped secrets. Prevents leakage of
+   * host process.env (API keys, database URLs, etc.) to plugin code.
+   */
+  private buildWorkerEnv(): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const key of WORKER_ENV_PASSTHROUGH_KEYS) {
+      const value = process.env[key];
+      if (value !== undefined) {
+        env[key] = value;
+      }
+    }
+    // Merge broker-scoped secrets (only explicitly granted scopes).
+    if (this.secretBroker) {
+      Object.assign(env, this.secretBroker.buildPluginEnv(this.pluginId));
+    }
+    return env;
   }
 
   // ---------------------------------------------------------------------------

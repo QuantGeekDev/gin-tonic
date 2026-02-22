@@ -5,6 +5,17 @@ import { createRpcDispatcher, } from "./rpc-bridge.js";
 import { createPluginContext } from "../context.js";
 const DEFAULT_WORKER_TIMEOUT_MS = 10_000;
 const workerRuntimePath = join(dirname(fileURLToPath(import.meta.url)), "worker-runtime.js");
+/**
+ * Essential env vars that must be passed to worker threads for Node.js
+ * module resolution and basic runtime functionality.
+ */
+const WORKER_ENV_PASSTHROUGH_KEYS = [
+    "NODE_PATH",
+    "HOME",
+    "PATH",
+    "LANG",
+    "TZ",
+];
 export class PluginWorkerHost {
     worker = null;
     pendingRequests = new Map();
@@ -33,7 +44,9 @@ export class PluginWorkerHost {
         this.rpcDispatcher = null;
     }
     async start(entryPath) {
-        this.worker = new Worker(workerRuntimePath);
+        this.worker = new Worker(workerRuntimePath, {
+            env: this.buildWorkerEnv(),
+        });
         this.worker.on("message", (message) => {
             // Discriminate worker-initiated RPC requests from normal responses.
             if ("type" in message && message.type === "rpc_request") {
@@ -291,6 +304,28 @@ export class PluginWorkerHost {
             capabilityPolicy: this.contextServices.capabilityPolicy,
             secretsSnapshot: this.secretBroker?.buildPluginEnv(this.pluginId) ?? {},
         };
+    }
+    // ---------------------------------------------------------------------------
+    // Env sanitization
+    // ---------------------------------------------------------------------------
+    /**
+     * Build a minimal env for the worker thread. Only passes through essential
+     * Node.js runtime vars plus broker-scoped secrets. Prevents leakage of
+     * host process.env (API keys, database URLs, etc.) to plugin code.
+     */
+    buildWorkerEnv() {
+        const env = {};
+        for (const key of WORKER_ENV_PASSTHROUGH_KEYS) {
+            const value = process.env[key];
+            if (value !== undefined) {
+                env[key] = value;
+            }
+        }
+        // Merge broker-scoped secrets (only explicitly granted scopes).
+        if (this.secretBroker) {
+            Object.assign(env, this.secretBroker.buildPluginEnv(this.pluginId));
+        }
+        return env;
     }
     // ---------------------------------------------------------------------------
     // Request infrastructure

@@ -47,6 +47,8 @@ export declare class PluginRuntime {
     private readonly statusStore;
     private readonly workerHosts;
     private readonly failureState;
+    private readonly secretBroker;
+    private grantCleanupTimer;
     private readonly breakerThreshold;
     private readonly breakerCooldownMs;
     private readonly breakerWindowMs;
