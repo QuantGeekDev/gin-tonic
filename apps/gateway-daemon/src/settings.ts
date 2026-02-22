@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 export interface RuntimeSettingDefinition {
   key: string;
-  category: "gateway" | "telegram" | "storage" | "llm" | "api";
+  category: "gateway" | "telegram" | "storage" | "llm" | "api" | "plugins";
   description: string;
   validate: (rawValue: string) => string;
   applyMode: "hot" | "restart_required";
@@ -239,6 +239,49 @@ const DEFINITIONS: RuntimeSettingDefinition[] = [
     category: "api",
     description: "Web API max requests per rate-limit window",
     validate: positiveInteger,
+    applyMode: "restart_required",
+  },
+  // Plugin isolation settings (ISOL-005)
+  {
+    key: "JIHN_PLUGIN_DEFAULT_MODE",
+    category: "plugins",
+    description: "Default plugin execution mode (in_process, worker_thread, external_process, container)",
+    validate: (raw) => enumValue(raw, ["in_process", "worker_thread", "external_process", "container"]),
+    applyMode: "restart_required",
+  },
+  {
+    key: "JIHN_PLUGIN_IN_PROCESS_ALLOWLIST",
+    category: "plugins",
+    description: "Comma-separated plugin IDs allowed to run in_process",
+    validate: nonEmpty,
+    applyMode: "restart_required",
+  },
+  {
+    key: "JIHN_PLUGIN_RISKY_PERMISSION_MIN_MODE",
+    category: "plugins",
+    description: "Minimum execution mode for plugins with risky permissions",
+    validate: (raw) => enumValue(raw, ["in_process", "worker_thread", "external_process", "container"]),
+    applyMode: "restart_required",
+  },
+  {
+    key: "JIHN_PLUGIN_NETWORK_ALLOWED_DOMAINS",
+    category: "plugins",
+    description: "Comma-separated domain allowlist for plugin network egress",
+    validate: nonEmpty,
+    applyMode: "restart_required",
+  },
+  {
+    key: "JIHN_PLUGIN_FS_ALLOWED_READ_PATHS",
+    category: "plugins",
+    description: "Comma-separated path allowlist for plugin filesystem reads",
+    validate: nonEmpty,
+    applyMode: "restart_required",
+  },
+  {
+    key: "JIHN_PLUGIN_FS_ALLOWED_WRITE_PATHS",
+    category: "plugins",
+    description: "Comma-separated path allowlist for plugin filesystem writes",
+    validate: nonEmpty,
     applyMode: "restart_required",
   },
 ];

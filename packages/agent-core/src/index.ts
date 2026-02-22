@@ -145,6 +145,12 @@ export {
   DEFAULT_ISOLATION_POLICY,
 } from "./plugins/isolation/policy.js";
 export {
+  resolveIsolationPolicyFromEnv,
+  resolveCapabilityPolicyFromEnv,
+  validateIsolationSetting,
+  PLUGIN_ISOLATION_ENV_KEYS,
+} from "./plugins/isolation/settings.js";
+export {
   PluginPermissionError,
   hasPluginPermission,
   requirePluginPermission,
