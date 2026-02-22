@@ -150,6 +150,13 @@ export {
   validateIsolationSetting,
   PLUGIN_ISOLATION_ENV_KEYS,
 } from "./plugins/isolation/settings.js";
+export { PluginSecretBroker } from "./plugins/isolation/secret-broker.js";
+export type {
+  SecretGrant,
+  SecretBrokerPolicy,
+  SecretBrokerAuditEvent,
+  SecretBrokerAuditCallback,
+} from "./plugins/isolation/secret-broker.js";
 export {
   PluginPermissionError,
   hasPluginPermission,
@@ -244,6 +251,7 @@ export type {
   PluginExecutionMode,
   PluginCapabilityPolicy,
   PluginCapabilityDenyCallback,
+  PluginSecretAccessor,
 } from "./plugins/types.js";
 export type {
   MemorySearchInput,

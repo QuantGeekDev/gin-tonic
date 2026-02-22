@@ -374,6 +374,15 @@ export type PluginCapabilityDenyCallback = (event: {
   reason: string;
 }) => void;
 
+/**
+ * Secret accessor for plugins. Provides scoped access to secrets
+ * through the secret broker instead of raw env access.
+ */
+export interface PluginSecretAccessor {
+  /** Request a secret by scope name. Returns the value or null if denied/unavailable. */
+  request(scope: string): string | null;
+}
+
 export interface PluginContext {
   readonly pluginId: string;
   readonly permissions: readonly PluginPermission[];
@@ -381,5 +390,6 @@ export interface PluginContext {
   readonly session: PluginSessionAccessor;
   readonly filesystem: PluginFilesystemAccessor;
   readonly network: PluginNetworkAccessor;
+  readonly secrets: PluginSecretAccessor;
   hasPermission(permission: PluginPermission): boolean;
 }

@@ -8,6 +8,7 @@ import type {
   PluginMemoryAccessor,
   PluginNetworkAccessor,
   PluginPermission,
+  PluginSecretAccessor,
   PluginSessionAccessor,
 } from "./types.js";
 import {
@@ -20,6 +21,7 @@ export interface PluginContextServices {
   session?: PluginSessionAccessor | undefined;
   filesystem?: PluginFilesystemAccessor | undefined;
   network?: PluginNetworkAccessor | undefined;
+  secrets?: PluginSecretAccessor | undefined;
   capabilityPolicy?: PluginCapabilityPolicy | undefined;
   onDeny?: PluginCapabilityDenyCallback | undefined;
 }
@@ -225,6 +227,18 @@ function createGatedNetworkAccessor(
   };
 }
 
+/**
+ * Creates a default no-op secret accessor that denies all requests.
+ * Plugins must be wired to a secret broker to get actual secret access.
+ */
+function createDefaultSecretAccessor(): PluginSecretAccessor {
+  return {
+    request() {
+      return null;
+    },
+  };
+}
+
 export function createPluginContext(
   manifest: PluginManifest,
   services: PluginContextServices = {},
@@ -237,6 +251,7 @@ export function createPluginContext(
     session: createGatedSessionAccessor(pluginId, manifest, services),
     filesystem: createGatedFilesystemAccessor(pluginId, manifest, services),
     network: createGatedNetworkAccessor(pluginId, manifest, services),
+    secrets: services.secrets ?? createDefaultSecretAccessor(),
     hasPermission(permission: PluginPermission): boolean {
       return hasPluginPermission(manifest, permission);
     },
