@@ -1,12 +1,26 @@
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import type { WorkerRequest, WorkerResponse } from "./protocol.js";
+import type {
+  WorkerRequest,
+  WorkerResponse,
+  WorkerRpcRequest,
+  WorkerRpcResponse,
+  WorkerToHostMessage,
+  WorkerContextMeta,
+} from "./protocol.js";
+import {
+  createRpcDispatcher,
+  type ServiceAccessorMap,
+} from "./rpc-bridge.js";
+import { createPluginContext, type PluginContextServices } from "../context.js";
 import type {
   JihnPlugin,
+  PluginContext,
   PluginManifest,
   PluginToolDefinition,
 } from "../types.js";
+import type { PluginSecretBroker } from "./secret-broker.js";
 import type { ToolDefinition } from "../../tools.js";
 
 const DEFAULT_WORKER_TIMEOUT_MS = 10_000;
@@ -28,14 +42,41 @@ export class PluginWorkerHost {
   public readonly pluginId: string;
   public readonly manifest: PluginManifest;
 
+  // Context bridge state
+  private contextServices: PluginContextServices | null = null;
+  private secretBroker: PluginSecretBroker | null = null;
+  private rpcDispatcher: ((request: WorkerRpcRequest) => void) | null = null;
+
   public constructor(manifest: PluginManifest) {
     this.manifest = manifest;
     this.pluginId = manifest.id;
   }
 
+  /**
+   * Provide the service implementations that back the worker's PluginContext.
+   * When set, tool execution requests include `contextMeta` and RPC calls
+   * from the worker are routed through gated accessors on the host.
+   */
+  public setContextServices(
+    services: PluginContextServices,
+    secretBroker?: PluginSecretBroker | undefined,
+  ): void {
+    this.contextServices = services;
+    this.secretBroker = secretBroker ?? null;
+    // Reset the dispatcher so it's rebuilt with the new services.
+    this.rpcDispatcher = null;
+  }
+
   public async start(entryPath: string): Promise<{ toolNames: string[]; hookNames: string[] }> {
     this.worker = new Worker(workerRuntimePath);
-    this.worker.on("message", (response: WorkerResponse) => {
+    this.worker.on("message", (message: WorkerToHostMessage) => {
+      // Discriminate worker-initiated RPC requests from normal responses.
+      if ("type" in message && message.type === "rpc_request") {
+        this.handleRpcRequest(message as WorkerRpcRequest);
+        return;
+      }
+      // Normal request/response flow.
+      const response = message as WorkerResponse;
       const pending = this.pendingRequests.get(response.id);
       if (pending) {
         clearTimeout(pending.timer);
@@ -99,12 +140,17 @@ export class PluginWorkerHost {
     input: Record<string, unknown>,
     timeoutMs = DEFAULT_WORKER_TIMEOUT_MS,
   ): Promise<string> {
+    this.ensureRpcDispatcher();
+
+    const contextMeta = this.buildContextMeta();
+
     const response = await this.send({
       type: "execute_tool",
       id: this.nextId(),
       toolName,
       input,
       timeoutMs,
+      ...(contextMeta !== undefined ? { contextMeta } : {}),
     });
 
     if (!response.ok) {
@@ -196,7 +242,7 @@ export class PluginWorkerHost {
       name,
       description: `[worker] ${name}`,
       inputSchema: { type: "object" as const, properties: {} } as ToolDefinition["inputSchema"],
-      async execute(input: Record<string, unknown>): Promise<string> {
+      async execute(input: Record<string, unknown>, _context?: PluginContext): Promise<string> {
         return host.executeTool(name, input);
       },
     }));
@@ -258,6 +304,77 @@ export class PluginWorkerHost {
 
     return { tools, hooks, lifecycle };
   }
+
+  // ---------------------------------------------------------------------------
+  // RPC bridge (host side)
+  // ---------------------------------------------------------------------------
+
+  private handleRpcRequest(request: WorkerRpcRequest): void {
+    if (!this.rpcDispatcher) {
+      this.worker?.postMessage({
+        type: "rpc_response",
+        rpcId: request.rpcId,
+        ok: false,
+        error: "context services not configured",
+      } satisfies WorkerRpcResponse);
+      return;
+    }
+    this.rpcDispatcher(request);
+  }
+
+  /**
+   * Lazily build the RPC dispatcher from the gated plugin context.
+   * The dispatcher routes worker RPC requests to the host's gated accessors
+   * where permission checks, ACL enforcement, and audit events all fire.
+   */
+  private ensureRpcDispatcher(): void {
+    if (this.rpcDispatcher || !this.contextServices) return;
+
+    const ctx = createPluginContext(this.manifest, this.contextServices);
+    const services: ServiceAccessorMap = {
+      memory: {
+        read: (query: string, options?: { namespace?: string; limit?: number }) =>
+          ctx.memory.read(query, options),
+        write: (text: string, options?: { namespace?: string; tags?: string[] }) =>
+          ctx.memory.write(text, options),
+      },
+      session: {
+        read: (key: string) => ctx.session.read(key),
+        write: (key: string, messages: unknown[]) => ctx.session.write(key, messages),
+      },
+      filesystem: {
+        read: (path: string) => ctx.filesystem.read(path),
+        write: (path: string, content: string) => ctx.filesystem.write(path, content),
+      },
+      network: {
+        fetch: (url: string, init?: RequestInit) => ctx.network.fetch(url, init),
+      },
+    };
+
+    this.rpcDispatcher = createRpcDispatcher(services, (response) => {
+      this.worker?.postMessage(response);
+    });
+  }
+
+  /**
+   * Build the serializable context metadata to send with a tool execution
+   * request. Returns `undefined` if no context services are configured.
+   */
+  private buildContextMeta(): WorkerContextMeta | undefined {
+    if (!this.contextServices) return undefined;
+
+    return {
+      pluginId: this.pluginId,
+      permissions: [...(this.manifest.permissions ?? [])],
+      manifest: this.manifest as unknown as Record<string, unknown>,
+      capabilityPolicy: this.contextServices.capabilityPolicy,
+      secretsSnapshot: this.secretBroker?.buildPluginEnv(this.pluginId) ?? {},
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Request infrastructure
+  // ---------------------------------------------------------------------------
 
   private nextId(): string {
     this.requestCounter += 1;

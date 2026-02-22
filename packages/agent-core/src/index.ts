@@ -141,6 +141,22 @@ export { createPluginContext } from "./plugins/context.js";
 export type { PluginContextServices } from "./plugins/context.js";
 export { PluginWorkerHost } from "./plugins/isolation/worker-host.js";
 export {
+  createRpcProxy,
+  createRpcDispatcher,
+  cleanupRpcProxy,
+} from "./plugins/isolation/rpc-bridge.js";
+export type {
+  RpcChannel,
+  ServiceAccessorMap,
+} from "./plugins/isolation/rpc-bridge.js";
+export type {
+  WorkerRpcRequest,
+  WorkerRpcResponse,
+  WorkerContextMeta,
+  WorkerToHostMessage,
+  HostToWorkerMessage,
+} from "./plugins/isolation/protocol.js";
+export {
   resolvePluginExecutionMode,
   DEFAULT_ISOLATION_POLICY,
 } from "./plugins/isolation/policy.js";

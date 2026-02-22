@@ -7,6 +7,7 @@ import { hasPluginPermission, PluginPermissionError, requirePluginPermission, } 
 import { InMemoryPluginStatusStore } from "./status-store.js";
 import { createPluginContext } from "./context.js";
 import { PLUGIN_CAPABILITIES } from "./types.js";
+import { resolvePluginExecutionMode, DEFAULT_ISOLATION_POLICY, } from "./isolation/policy.js";
 const DEFAULT_HOOK_TIMEOUT_MS = 2_000;
 const DEFAULT_HOOK_ERROR_MODE = "continue";
 const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 5;
@@ -267,6 +268,23 @@ export class PluginRuntime {
         this.pluginMap = new Map();
         this.contextMap = new Map();
         const contextServices = options.contextServices ?? {};
+        // Inject deny callback for audit events from capability enforcement
+        const eventSinkRef = this.eventSink;
+        if (!contextServices.onDeny) {
+            contextServices.onDeny = (event) => {
+                eventSinkRef.emit({
+                    timestamp: nowIso(),
+                    name: "plugin.permission.denied",
+                    pluginId: event.pluginId,
+                    details: {
+                        permission: event.permission,
+                        operation: event.operation,
+                        target: event.target,
+                        reason: event.reason,
+                    },
+                });
+            };
+        }
         for (const entry of this.plugins) {
             this.pluginMap.set(entry.manifest.id, entry);
             this.contextMap.set(entry.manifest.id, createPluginContext(entry.manifest, contextServices));
@@ -733,6 +751,8 @@ export async function loadWorkspacePlugins(options = {}) {
     const logger = options.logger ?? DEFAULT_LOGGER;
     const hostVersion = options.hostVersion ?? DEFAULT_PLUGIN_HOST_VERSION;
     const supportedApiVersions = options.supportedApiVersions ?? [...DEFAULT_SUPPORTED_PLUGIN_API_VERSIONS];
+    const isolationPolicy = options.isolationPolicy ?? DEFAULT_ISOLATION_POLICY;
+    const eventSink = options.eventSink;
     const manifests = await discoverPluginManifests(options);
     const issues = [];
     const plugins = [];
@@ -761,7 +781,58 @@ export async function loadWorkspacePlugins(options = {}) {
         }
         try {
             const entryPath = resolve(item.rootDir, item.manifest.entry);
-            if (item.manifest.executionMode === "worker_thread") {
+            // Resolve effective execution mode via policy
+            const modeResolution = resolvePluginExecutionMode(item.manifest, isolationPolicy);
+            logger.debug?.("plugin.policy.resolved", {
+                pluginId,
+                effectiveMode: modeResolution.effectiveMode,
+                requestedMode: modeResolution.requestedMode,
+                reasons: modeResolution.reasons,
+                denied: modeResolution.denied,
+            });
+            if (modeResolution.denied) {
+                const denyMessage = `policy denied: ${modeResolution.reasons.join("; ")}`;
+                issues.push({
+                    pluginId,
+                    level: "error",
+                    message: denyMessage,
+                });
+                eventSink?.emit({
+                    timestamp: nowIso(),
+                    name: "plugin.policy.denied",
+                    pluginId,
+                    details: {
+                        requestedMode: modeResolution.requestedMode,
+                        effectiveMode: modeResolution.effectiveMode,
+                        reasons: modeResolution.reasons,
+                    },
+                });
+                logger.warn("plugin.policy.denied", {
+                    pluginId,
+                    message: denyMessage,
+                });
+                continue;
+            }
+            const effectiveMode = modeResolution.effectiveMode;
+            eventSink?.emit({
+                timestamp: nowIso(),
+                name: "plugin.policy.resolved",
+                pluginId,
+                details: {
+                    effectiveMode,
+                    requestedMode: modeResolution.requestedMode,
+                    reasons: modeResolution.reasons,
+                },
+            });
+            if (effectiveMode === "external_process" || effectiveMode === "container") {
+                issues.push({
+                    pluginId,
+                    level: "error",
+                    message: `execution mode "${effectiveMode}" is not yet supported (requires M2/M3)`,
+                });
+                continue;
+            }
+            if (effectiveMode === "worker_thread") {
                 const host = new PluginWorkerHost(item.manifest);
                 await host.start(entryPath);
                 const proxyPlugin = host.toPluginProxy();
@@ -829,7 +900,13 @@ export async function loadWorkspacePlugins(options = {}) {
 export function createPluginRuntimeFromLoaded(loaded, options = {}) {
     const runtime = new PluginRuntime(loaded.plugins, options);
     for (const { pluginId, host } of loaded.workerHosts ?? []) {
-        runtime.registerWorkerHost(pluginId, host);
+        const workerHost = host;
+        // Wire context services so worker-thread plugins get a PluginContext
+        // backed by RPC proxies to the host's gated accessors.
+        if (options.contextServices) {
+            workerHost.setContextServices(options.contextServices, options.secretBroker);
+        }
+        runtime.registerWorkerHost(pluginId, workerHost);
     }
     return runtime;
 }

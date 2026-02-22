@@ -1,16 +1,31 @@
 import { parentPort } from "node:worker_threads";
 import { pathToFileURL } from "node:url";
 import type {
-  WorkerRequest,
   WorkerResponse,
   WorkerLoadRequest,
   WorkerExecuteHookRequest,
   WorkerExecuteToolRequest,
   WorkerLifecycleRequest,
   WorkerHealthcheckRequest,
+  WorkerRpcRequest,
+  WorkerRpcResponse,
+  WorkerContextMeta,
+  HostToWorkerMessage,
 } from "./protocol.js";
+import {
+  createRpcProxy,
+  cleanupRpcProxy,
+  type RpcChannel,
+} from "./rpc-bridge.js";
 import type {
   JihnPlugin,
+  PluginContext,
+  PluginFilesystemAccessor,
+  PluginMemoryAccessor,
+  PluginNetworkAccessor,
+  PluginPermission,
+  PluginSecretAccessor,
+  PluginSessionAccessor,
   PluginToolDefinition,
 } from "../types.js";
 
@@ -18,9 +33,99 @@ let loadedPlugin: JihnPlugin | null = null;
 const toolMap = new Map<string, PluginToolDefinition>();
 const hookNames: string[] = [];
 
+// ---------------------------------------------------------------------------
+// RPC response routing
+// ---------------------------------------------------------------------------
+
+/** Active response handlers keyed by scope (one per concurrent tool execution). */
+const rpcResponseHandlers = new Set<(response: WorkerRpcResponse) => void>();
+
+function routeRpcResponse(response: WorkerRpcResponse): void {
+  for (const handler of rpcResponseHandlers) {
+    handler(response);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Worker-side PluginContext reconstruction
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a PluginContext inside the worker from serialized metadata.
+ * Async service accessors (memory, session, filesystem, network) are backed
+ * by RPC proxies that relay calls to the host's gated implementations.
+ * Secrets use a pre-resolved snapshot for synchronous access.
+ */
+function buildWorkerContext(
+  meta: WorkerContextMeta,
+  channel: RpcChannel,
+): { context: PluginContext; cleanup: () => void } {
+  const memory = createRpcProxy<PluginMemoryAccessor>("memory", ["read", "write"], channel);
+  const session = createRpcProxy<PluginSessionAccessor>("session", ["read", "write"], channel);
+  const filesystem = createRpcProxy<PluginFilesystemAccessor>("filesystem", ["read", "write"], channel);
+  const network = createRpcProxy<PluginNetworkAccessor>("network", ["fetch"], channel);
+
+  const secrets: PluginSecretAccessor = {
+    request(scope: string): string | null {
+      return meta.secretsSnapshot[scope] ?? null;
+    },
+  };
+
+  const permissions = Object.freeze([...(meta.permissions as PluginPermission[])]);
+
+  const context: PluginContext = {
+    pluginId: meta.pluginId,
+    permissions,
+    memory,
+    session,
+    filesystem,
+    network,
+    secrets,
+    hasPermission(permission: PluginPermission): boolean {
+      return (meta.permissions as string[]).includes(permission);
+    },
+  };
+
+  const cleanup = () => {
+    cleanupRpcProxy(memory);
+    cleanupRpcProxy(session);
+    cleanupRpcProxy(filesystem);
+    cleanupRpcProxy(network);
+  };
+
+  return { context, cleanup };
+}
+
+/**
+ * Create an RpcChannel scoped to a single tool execution.
+ * The channel's `onResponse` registers/unregisters a handler in the
+ * module-level `rpcResponseHandlers` set, ensuring cleanup after execution.
+ */
+function createWorkerRpcChannel(): RpcChannel {
+  return {
+    postMessage(message: WorkerRpcRequest): void {
+      parentPort?.postMessage(message);
+    },
+    onResponse(handler: (response: WorkerRpcResponse) => void): () => void {
+      rpcResponseHandlers.add(handler);
+      return () => {
+        rpcResponseHandlers.delete(handler);
+      };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Message sending
+// ---------------------------------------------------------------------------
+
 function respond(response: WorkerResponse): void {
   parentPort?.postMessage(response);
 }
+
+// ---------------------------------------------------------------------------
+// Request handlers
+// ---------------------------------------------------------------------------
 
 async function handleLoad(request: WorkerLoadRequest): Promise<void> {
   try {
@@ -105,8 +210,18 @@ async function handleExecuteTool(request: WorkerExecuteToolRequest): Promise<voi
     return;
   }
 
+  let context: PluginContext | undefined;
+  let cleanup: (() => void) | undefined;
+
+  if (request.contextMeta) {
+    const channel = createWorkerRpcChannel();
+    const built = buildWorkerContext(request.contextMeta, channel);
+    context = built.context;
+    cleanup = built.cleanup;
+  }
+
   try {
-    const result = await tool.execute(request.input);
+    const result = await tool.execute(request.input, context);
     respond({ id: request.id, ok: true, result });
   } catch (error) {
     respond({
@@ -114,6 +229,8 @@ async function handleExecuteTool(request: WorkerExecuteToolRequest): Promise<voi
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    cleanup?.();
   }
 }
 
@@ -168,48 +285,60 @@ async function handleHealthcheck(request: WorkerHealthcheckRequest): Promise<voi
   }
 }
 
-parentPort?.on("message", (message: WorkerRequest) => {
-  switch (message.type) {
+// ---------------------------------------------------------------------------
+// Message dispatch
+// ---------------------------------------------------------------------------
+
+parentPort?.on("message", (message: HostToWorkerMessage) => {
+  // Route host-to-worker RPC responses to the pending proxy handlers.
+  if ("type" in message && message.type === "rpc_response") {
+    routeRpcResponse(message as WorkerRpcResponse);
+    return;
+  }
+
+  // Standard host-initiated requests.
+  const request = message as HostToWorkerMessage;
+  switch ((request as { type: string }).type) {
     case "load":
-      handleLoad(message).catch((error) => {
+      handleLoad(request as WorkerLoadRequest).catch((error) => {
         respond({
-          id: message.id,
+          id: (request as WorkerLoadRequest).id,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         });
       });
       break;
     case "execute_hook":
-      handleExecuteHook(message).catch((error) => {
+      handleExecuteHook(request as WorkerExecuteHookRequest).catch((error) => {
         respond({
-          id: message.id,
+          id: (request as WorkerExecuteHookRequest).id,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         });
       });
       break;
     case "execute_tool":
-      handleExecuteTool(message).catch((error) => {
+      handleExecuteTool(request as WorkerExecuteToolRequest).catch((error) => {
         respond({
-          id: message.id,
+          id: (request as WorkerExecuteToolRequest).id,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         });
       });
       break;
     case "lifecycle":
-      handleLifecycle(message).catch((error) => {
+      handleLifecycle(request as WorkerLifecycleRequest).catch((error) => {
         respond({
-          id: message.id,
+          id: (request as WorkerLifecycleRequest).id,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         });
       });
       break;
     case "healthcheck":
-      handleHealthcheck(message).catch((error) => {
+      handleHealthcheck(request as WorkerHealthcheckRequest).catch((error) => {
         respond({
-          id: message.id,
+          id: (request as WorkerHealthcheckRequest).id,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -225,10 +354,10 @@ parentPort?.on("message", (message: WorkerRequest) => {
         )
           .catch(() => {})
           .finally(() => {
-            respond({ id: message.id, ok: true });
+            respond({ id: (request as { id: string }).id, ok: true });
           });
       } else {
-        respond({ id: message.id, ok: true });
+        respond({ id: (request as { id: string }).id, ok: true });
       }
       break;
   }

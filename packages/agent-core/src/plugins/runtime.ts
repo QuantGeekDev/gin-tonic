@@ -39,6 +39,7 @@ import {
   resolvePluginExecutionMode,
   DEFAULT_ISOLATION_POLICY,
 } from "./isolation/policy.js";
+import type { PluginSecretBroker } from "./isolation/secret-broker.js";
 import type { ToolDefinition } from "../tools.js";
 
 const DEFAULT_HOOK_TIMEOUT_MS = 2_000;
@@ -70,6 +71,7 @@ export interface PluginRuntimeOptions {
   statusStore?: PluginStatusStore | undefined;
   circuitBreaker?: PluginCircuitBreakerOptions | undefined;
   contextServices?: PluginContextServices | undefined;
+  secretBroker?: PluginSecretBroker | undefined;
 }
 
 export interface LoadWorkspacePluginsOptions {
@@ -1129,7 +1131,13 @@ export function createPluginRuntimeFromLoaded(
 ): PluginRuntime {
   const runtime = new PluginRuntime(loaded.plugins, options);
   for (const { pluginId, host } of loaded.workerHosts ?? []) {
-    runtime.registerWorkerHost(pluginId, host as PluginWorkerHost);
+    const workerHost = host as PluginWorkerHost;
+    // Wire context services so worker-thread plugins get a PluginContext
+    // backed by RPC proxies to the host's gated accessors.
+    if (options.contextServices) {
+      workerHost.setContextServices(options.contextServices, options.secretBroker);
+    }
+    runtime.registerWorkerHost(pluginId, workerHost);
   }
   return runtime;
 }

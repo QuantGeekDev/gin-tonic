@@ -1,7 +1,8 @@
 import { PluginWorkerHost } from "./isolation/worker-host.js";
 import { PluginPermissionError } from "./permissions.js";
 import { type PluginContextServices } from "./context.js";
-import type { JihnPlugin, JihnPluginModule, LoadedPlugin, PluginAfterToolCallEvent, PluginBeforeToolCallEvent, PluginContext, PluginEvent, PluginEventSink, PluginLoadResult, PluginManifest, PluginPermission, PluginPromptComposeContext, PluginRoutingContext, PluginRuntimeLogger, PluginStatusSnapshot, PluginStatusStore, PluginTurnResult } from "./types.js";
+import type { JihnPlugin, JihnPluginModule, LoadedPlugin, PluginAfterToolCallEvent, PluginBeforeToolCallEvent, PluginContext, PluginEvent, PluginEventSink, PluginIsolationPolicy, PluginLoadResult, PluginManifest, PluginPermission, PluginPromptComposeContext, PluginRoutingContext, PluginRuntimeLogger, PluginStatusSnapshot, PluginStatusStore, PluginTurnResult } from "./types.js";
+import type { PluginSecretBroker } from "./isolation/secret-broker.js";
 import type { ToolDefinition } from "../tools.js";
 export declare const DEFAULT_PLUGIN_HOST_VERSION = "1.0.0";
 export declare const DEFAULT_SUPPORTED_PLUGIN_API_VERSIONS: readonly [1];
@@ -16,6 +17,7 @@ export interface PluginRuntimeOptions {
     statusStore?: PluginStatusStore | undefined;
     circuitBreaker?: PluginCircuitBreakerOptions | undefined;
     contextServices?: PluginContextServices | undefined;
+    secretBroker?: PluginSecretBroker | undefined;
 }
 export interface LoadWorkspacePluginsOptions {
     workspaceDir?: string;
@@ -23,6 +25,8 @@ export interface LoadWorkspacePluginsOptions {
     logger?: PluginRuntimeLogger;
     hostVersion?: string;
     supportedApiVersions?: number[];
+    isolationPolicy?: PluginIsolationPolicy;
+    eventSink?: PluginEventSink;
 }
 export declare function topologicalSortPlugins(entries: LoadedPlugin[]): {
     sorted: LoadedPlugin[];
