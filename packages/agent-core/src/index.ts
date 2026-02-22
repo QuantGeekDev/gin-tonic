@@ -236,6 +236,8 @@ export type {
   PluginIsolationPolicy,
   PluginModeResolution,
   PluginExecutionMode,
+  PluginCapabilityPolicy,
+  PluginCapabilityDenyCallback,
 } from "./plugins/types.js";
 export type {
   MemorySearchInput,

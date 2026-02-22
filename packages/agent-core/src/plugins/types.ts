@@ -336,6 +336,44 @@ export interface PluginNetworkAccessor {
   fetch(url: string, init?: RequestInit): Promise<{ status: number; body: string }>;
 }
 
+/**
+ * Per-plugin capability enforcement policy.
+ * When set, operations are validated against allowlists before delegation.
+ * Default behavior when no policy is set: deny operations that lack
+ * the declared permission (existing behavior). When policy IS set,
+ * even permitted operations are further constrained by the allowlists.
+ */
+export interface PluginCapabilityPolicy {
+  /** Filesystem path ACLs. Paths are resolved and matched as prefixes. */
+  filesystem?: {
+    allowedReadPaths?: string[];
+    allowedWritePaths?: string[];
+  };
+  /** Network egress domain allowlist. Matched against URL hostname. */
+  network?: {
+    allowedDomains?: string[];
+  };
+  /** Memory namespace scoping. Plugin can only access these namespaces. */
+  memory?: {
+    allowedNamespaces?: string[];
+  };
+  /** Session scope guard. Plugin can only access these session key patterns. */
+  session?: {
+    allowedSessionPatterns?: string[];
+  };
+}
+
+/**
+ * Callback for denied capability operations, used for audit events.
+ */
+export type PluginCapabilityDenyCallback = (event: {
+  pluginId: string;
+  permission: PluginPermission;
+  operation: string;
+  target: string;
+  reason: string;
+}) => void;
+
 export interface PluginContext {
   readonly pluginId: string;
   readonly permissions: readonly PluginPermission[];

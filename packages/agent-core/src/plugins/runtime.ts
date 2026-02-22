@@ -373,6 +373,23 @@ export class PluginRuntime {
     this.pluginMap = new Map();
     this.contextMap = new Map();
     const contextServices = options.contextServices ?? {};
+    // Inject deny callback for audit events from capability enforcement
+    const eventSinkRef = this.eventSink;
+    if (!contextServices.onDeny) {
+      contextServices.onDeny = (event) => {
+        eventSinkRef.emit({
+          timestamp: nowIso(),
+          name: "plugin.permission.denied",
+          pluginId: event.pluginId,
+          details: {
+            permission: event.permission,
+            operation: event.operation,
+            target: event.target,
+            reason: event.reason,
+          },
+        });
+      };
+    }
 
     for (const entry of this.plugins) {
       this.pluginMap.set(entry.manifest.id, entry);
